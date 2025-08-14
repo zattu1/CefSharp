@@ -13,7 +13,7 @@
 ## システム要件
 
 - Windows 10/11 (x64)
-- .NET 6.0 Runtime
+- .NET 8.0 Runtime
 - Visual C++ 2022 Redistributable (x64)
 - 最低 4GB RAM
 - 最低 1GB 空きディスク容量
@@ -26,7 +26,7 @@
 
 ## 開発環境セットアップ
 
-1. .NET 6 SDK をインストール
+1. .NET 8 SDK をインストール
 2. Visual Studio 2022 (Community 以上)
 3. Visual C++ 2022 Redistributable
 4. PowerShell で setup.ps1 を実行

@@ -1,0 +1,230 @@
+<UserControl x:Class="CefSharp.fastBOT.AutoPurchaseControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="5">
+
+            <!-- 購入進捗バー -->
+            <ProgressBar x:Name="ProgressBar" Maximum="11" Value="0" Height="20" Margin="0,0,0,5"/>
+
+            <!-- ページ解析・監視 -->
+            <GroupBox Header="ページ解析・監視" Margin="0,5">
+                <StackPanel>
+                    <Button x:Name="GetPageHtmlButton" Content="ページ解析" 
+                            Margin="0,2" ToolTip="ページ全体を解析してチケット情報を取得"/>
+                    <Button x:Name="GetBodyHtmlButton" Content="コンテンツ解析" 
+                            Margin="0,2" ToolTip="メインコンテンツを解析"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
+                        <Label Content="監視対象:"/>
+                        <TextBox x:Name="SelectorTextBox" Width="120" 
+                                 Text=".ticket-area" Margin="2,0" 
+                                 ToolTip="監視する要素のCSSセレクター"/>
+                    </StackPanel>
+                    <Button x:Name="GetElementHtmlButton" Content="要素監視" 
+                            Margin="0,2" ToolTip="指定した要素を監視"/>
+                    <Button x:Name="GetPageTextButton" Content="テキスト抽出" 
+                            Margin="0,2" ToolTip="ページからテキストを抽出"/>
+                    <CheckBox x:Name="AutoSaveCheckBox" Content="ログ自動保存" 
+                              Margin="0,5" ToolTip="解析結果を自動的にファイルに保存"/>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- アカウント管理 -->
+            <GroupBox Header="アカウント管理" Margin="0,5">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Label Content="アカウント:" Width="60"/>
+                        <ComboBox x:Name="AccountComboBox" Width="130" Margin="2,0"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Button x:Name="SaveAccountButton" Content="保存" Width="40" Margin="2,0"/>
+                        <Button x:Name="NewAccountButton" Content="新規" Width="40" Margin="2,0"/>
+                        <Button x:Name="DeleteAccountButton" Content="削除" Width="40" Margin="2,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- チケット購入情報 -->
+            <GroupBox Header="チケット購入情報" Margin="0,5">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="80"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Label Grid.Row="0" Grid.Column="0" Content="ログインID:"/>
+                    <TextBox x:Name="LoginEdit" Grid.Row="0" Grid.Column="1"/>
+
+                    <Label Grid.Row="1" Grid.Column="0" Content="パスワード:"/>
+                    <PasswordBox x:Name="PasswordEdit" Grid.Row="1" Grid.Column="1"/>
+
+                    <Button x:Name="LoginButton" Grid.Row="2" Grid.Column="1" 
+                            Content="ログイン" HorizontalAlignment="Left" Width="80"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- ネットワーク設定 -->
+            <GroupBox Header="ネットワーク設定" Margin="0,5">
+                <StackPanel>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="60"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Label Grid.Row="0" Grid.Column="0" Content="Proxy:"/>
+                        <TextBox x:Name="ProxyLineEdit" Grid.Row="0" Grid.Column="1" 
+                                 Text="127.0.0.1:8080"/>
+
+                        <CheckBox x:Name="ProxyRotationCheckBox" Grid.Row="1" Grid.ColumnSpan="2" 
+                                  Content="Proxyローテーション" Margin="0,3"/>
+
+                        <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal">
+                            <RadioButton x:Name="PerRequestRadioButton" Content="毎回" 
+                                         IsChecked="True" Margin="5,0"/>
+                            <RadioButton x:Name="EverySecondRadioButton" Content="秒毎" 
+                                         Margin="5,0"/>
+                            <TextBox x:Name="ProxyEverySecondLineEdit" Width="60" 
+                                     Text="30" Margin="5,0"/>
+                            <Label Content="秒"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Button x:Name="ApplyProxyButton" Content="Proxy適用" Margin="0,5"/>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 購入者情報 -->
+            <GroupBox Header="購入者情報" Margin="0,5">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Label Grid.Row="0" Grid.Column="0" Content="姓名:"/>
+                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="LastNameLineEdit" Width="70"/>
+                        <TextBox x:Name="FirstNameLineEdit" Width="70" Margin="5,0,0,0"/>
+                    </StackPanel>
+
+                    <Label Grid.Row="1" Grid.Column="0" Content="カナ:"/>
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="LastKanaLineEdit" Width="70"/>
+                        <TextBox x:Name="FirstKanaLineEdit" Width="70" Margin="5,0,0,0"/>
+                    </StackPanel>
+
+                    <Label Grid.Row="2" Grid.Column="0" Content="TEL:"/>
+                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="Tel1LineEdit" Width="40"/>
+                        <Label Content="-"/>
+                        <TextBox x:Name="Tel2LineEdit" Width="50"/>
+                        <Label Content="-"/>
+                        <TextBox x:Name="Tel3LineEdit" Width="50"/>
+                    </StackPanel>
+
+                    <Label Grid.Row="3" Grid.Column="0" Content="Email:"/>
+                    <TextBox x:Name="EmailLineEdit" Grid.Row="3" Grid.Column="1"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- クレジットカード -->
+            <GroupBox Header="クレジットカード" Margin="0,5">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Label Grid.Row="0" Grid.Column="0" Content="番号:"/>
+                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="CardNumberLineEdit" Width="120"/>
+                        <Label Content="CVV"/>
+                        <TextBox x:Name="CvvLineEdit" Width="50"/>
+                    </StackPanel>
+
+                    <Label Grid.Row="1" Grid.Column="0" Content="有効期限:"/>
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                        <ComboBox x:Name="MonthComboBox" Width="50"/>
+                        <Label Content="月"/>
+                        <ComboBox x:Name="YearComboBox" Width="60"/>
+                        <Label Content="年"/>
+                    </StackPanel>
+
+                    <Label Grid.Row="2" Grid.Column="0" Content="名義人:"/>
+                    <TextBox x:Name="CardNameLineEdit" Grid.Row="2" Grid.Column="1"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- チケット選択設定 -->
+            <GroupBox Header="チケット選択設定" Margin="0,5">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="対象公演"/>
+                        <CheckBox x:Name="AllCheckBox" Content="全て選択/解除" Margin="20,0,0,0"/>
+                    </StackPanel>
+                    <ListBox x:Name="EventListWidget" Height="120"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
+                        <Label Content="購入枚数:"/>
+                        <ComboBox x:Name="NumComboBox" Width="60">
+                            <ComboBoxItem Content="1"/>
+                            <ComboBoxItem Content="2"/>
+                        </ComboBox>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 自動購入実行 -->
+            <GroupBox Header="自動購入実行" Margin="0,5">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="監視間隔:"/>
+                        <TextBox x:Name="IntervalEdit" Width="60" Text="2000"/>
+                        <Label Content="msec"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,10">
+                        <Button x:Name="StartButton" Content="購入開始" Width="80" 
+                                IsEnabled="False" Background="LightGreen"/>
+                        <Button x:Name="StopButton" Content="停止" Width="80" 
+                                Margin="5,0" Background="LightCoral"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 購入状況・ログ -->
+            <GroupBox Header="購入状況・ログ" Margin="0,5">
+                <StackPanel>
+                    <TextBlock x:Name="StatusText" Text="Ready" Margin="0,2"/>
+                    <TextBlock x:Name="ProxyStatusText" Text="Proxy: 未設定" Margin="0,2"/>
+                    <TextBlock x:Name="RequestContextInfo" Text="Context: Default" Margin="0,2"/>
+                    <TextBlock x:Name="HtmlStatusText" Text="解析: 未実行" Margin="0,2"/>
+                    <TextBlock x:Name="AccountStatusText" Text="アカウント: 未選択" Margin="0,2"/>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

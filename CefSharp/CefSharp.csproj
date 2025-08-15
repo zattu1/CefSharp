@@ -1,20 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Resources\fastBOT.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
     <RootNamespace>CefSharp.fastBOT</RootNamespace>
     <AssemblyName>CefSharp.fastBOT</AssemblyName>
-    <ApplicationIcon>Resources\fastbot.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Resources\fastBOT.ico" />
     <PackageReference Include="CefSharp.Wpf.NETCore" Version="138.0.170" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\fastBOT.ico" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,11 +26,14 @@
     </None>
   </ItemGroup>
 
-  <!-- テストファイルを除外 -->
-  <ItemGroup>
-    <Compile Remove="Tests\**" />
-    <EmbeddedResource Remove="Tests\**" />
-    <None Remove="Tests\**" />
-  </ItemGroup>
+  <!-- CefSharp設定 -->
+  <PropertyGroup>
+    <CefSharpAnyCpuSupport>true</CefSharpAnyCpuSupport>
+  </PropertyGroup>
+
+  <!-- Debug用設定 -->
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
 
 </Project>

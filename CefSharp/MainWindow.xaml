@@ -8,133 +8,252 @@
         WindowStartupLocation="CenterScreen"
         Icon="Resources/fastBOT.ico">
 
+    <Window.Resources>
+        <!-- ステータスバーのスタイル -->
+        <Style x:Key="StatusBarStyle" TargetType="StatusBar">
+            <Setter Property="Background" Value="#f0f0f0"/>
+            <Setter Property="BorderBrush" Value="#d0d0d0"/>
+            <Setter Property="BorderThickness" Value="0,1,0,0"/>
+            <Setter Property="Height" Value="24"/>
+        </Style>
+
+        <Style x:Key="StatusBarItemStyle" TargetType="StatusBarItem">
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+
+        <Style x:Key="StatusSeparatorStyle" TargetType="Separator">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Background" Value="#d0d0d0"/>
+            <Setter Property="Margin" Value="2,2"/>
+        </Style>
+
+        <!-- ComboBoxのスタイル -->
+        <Style x:Key="FixedComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="Gray"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,3"/>
+        </Style>
+
+        <Style x:Key="FixedComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border Name="ItemBorder" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#E3F2FD"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#BBDEFB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="Gray"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="300"/>
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-        <!-- 左側：メインブラウザエリア -->
-        <Grid Grid.Column="0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
+        <!-- メインコンテンツエリア -->
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
 
-            <!-- ブラウザコントロールバー -->
-            <Grid Grid.Row="0" Background="LightGray" Margin="2">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <Button x:Name="PrevButton" Grid.Column="0" Content="◀" Width="40" FontSize="18" 
-                        ToolTip="戻る" Margin="2" Click="PrevButton_Click"/>
-                <Button x:Name="NextButton" Grid.Column="1" Content="▶" Width="40" FontSize="18" 
-                        ToolTip="進む" Margin="2" Click="NextButton_Click"/>
-                <Button x:Name="ReloadButton" Grid.Column="2" Content="⟳" Width="40" FontSize="18" 
-                        ToolTip="再読込" Margin="2" Click="ReloadButton_Click"/>
-                <Button x:Name="TopButton" Grid.Column="3" Content="■" Width="40" FontSize="18" 
-                        ToolTip="トップ画面へ" Margin="2" Click="TopButton_Click"/>
-
-                <!-- URL入力エリア -->
-                <Border Grid.Column="4" Background="White" CornerRadius="3" Margin="5,2" BorderBrush="Gray" BorderThickness="1">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-
-                        <!-- Favicon表示エリア -->
-                        <Image x:Name="AddressFaviconImage" Grid.Column="0" 
-                               Width="16" Height="16" 
-                               Margin="6,0,4,0" 
-                               VerticalAlignment="Center"/>
-
-                        <!-- URL入力ボックス -->
-                        <TextBox x:Name="UrlLineEdit" Grid.Column="1" 
-                                 BorderThickness="0" 
-                                 Background="Transparent"
-                                 VerticalAlignment="Center"
-                                 Padding="0,3"
-                                 KeyDown="UrlLineEdit_KeyDown"/>
-                    </Grid>
-                </Border>
-
-                <Button x:Name="GoButton" Grid.Column="5" Content="移動" Margin="2" Click="GoButton_Click"/>
-                <Button x:Name="NewTabButton" Grid.Column="6" Content="+" Width="30" FontSize="16" 
-                        ToolTip="新しいタブ (Ctrl+T)" Margin="5,2,2,2" Click="CreateNewTabButton_Click"/>
-            </Grid>
-
-            <!-- プログレスバー -->
-            <ProgressBar x:Name="WebProgressBar" Grid.Row="1" Height="2" 
-                         Background="Transparent" Foreground="#da4453"/>
-
-            <!-- タブコントロール -->
-            <TabControl x:Name="TabWidget" Grid.Row="2" Margin="2">
-                <!-- タブは動的に追加 -->
-                <TabControl.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="新しいタブ(_N)" InputGestureText="Ctrl+T" Click="NewTabMenuItem_Click">
-                            <MenuItem.Icon>
-                                <TextBlock Text="+" FontWeight="Bold"/>
-                            </MenuItem.Icon>
-                        </MenuItem>
-                        <Separator/>
-                        <MenuItem Header="タブを閉じる(_C)" InputGestureText="Ctrl+W" Click="CloseTabMenuItem_Click">
-                            <MenuItem.Icon>
-                                <TextBlock Text="×" FontWeight="Bold"/>
-                            </MenuItem.Icon>
-                        </MenuItem>
-                        <MenuItem Header="他のタブを閉じる(_O)" Click="CloseOtherTabsMenuItem_Click"/>
-                        <Separator/>
-                        <MenuItem Header="タブを複製(_D)" Click="DuplicateTabMenuItem_Click">
-                            <MenuItem.Icon>
-                                <TextBlock Text="⧉" FontWeight="Bold"/>
-                            </MenuItem.Icon>
-                        </MenuItem>
-                        <MenuItem Header="新しいウィンドウで開く(_W)" Click="NewWindowMenuItem_Click">
-                            <MenuItem.Icon>
-                                <TextBlock Text="🗔" FontWeight="Bold"/>
-                            </MenuItem.Icon>
-                        </MenuItem>
-                        <Separator/>
-                        <MenuItem Header="タブ復元(_R)" InputGestureText="Ctrl+Shift+T" IsEnabled="False" Click="RestoreLastClosedTabMenuItem_Click">
-                            <MenuItem.Icon>
-                                <TextBlock Text="↶" FontWeight="Bold"/>
-                            </MenuItem.Icon>
-                        </MenuItem>
-                    </ContextMenu>
-                </TabControl.ContextMenu>
-            </TabControl>
-        </Grid>
-
-        <!-- 右側：自動購入コントロールパネル -->
-        <Border Grid.Column="1" Background="LightGray" Margin="2,2,2,2">
-            <Grid>
+            <!-- 左側：メインブラウザエリア -->
+            <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- ヘッダー -->
-                <Border Grid.Row="0" Background="DarkBlue" Padding="5">
-                    <TextBlock Text="fastBOT 自動購入システム" 
-                               Foreground="White" FontWeight="Bold" FontSize="12" 
-                               HorizontalAlignment="Center"/>
-                </Border>
+                <!-- ブラウザコントロールバー -->
+                <Grid Grid.Row="0" Background="LightGray" Margin="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-                <!-- 自動購入コントロール -->
-                <local:AutoPurchaseControl x:Name="AutoPurchaseControlPanel" 
-                                          Grid.Row="1" 
-                                          Background="White"/>
+                    <Button x:Name="PrevButton" Grid.Column="0" Content="◀" Width="40" FontSize="18" 
+                            ToolTip="戻る" Margin="2" Click="PrevButton_Click"/>
+                    <Button x:Name="NextButton" Grid.Column="1" Content="▶" Width="40" FontSize="18" 
+                            ToolTip="進む" Margin="2" Click="NextButton_Click"/>
+                    <Button x:Name="ReloadButton" Grid.Column="2" Content="⟳" Width="40" FontSize="18" 
+                            ToolTip="再読込" Margin="2" Click="ReloadButton_Click"/>
+                    <Button x:Name="TopButton" Grid.Column="3" Content="■" Width="40" FontSize="18" 
+                            ToolTip="トップ画面へ" Margin="2" Click="TopButton_Click"/>
+
+                    <!-- URL入力エリア -->
+                    <Border Grid.Column="4" Background="White" CornerRadius="3" Margin="5,2" BorderBrush="Gray" BorderThickness="1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Favicon表示エリア -->
+                            <Image x:Name="AddressFaviconImage" Grid.Column="0" 
+                                   Width="16" Height="16" 
+                                   Margin="6,0,4,0" 
+                                   VerticalAlignment="Center"/>
+
+                            <!-- URL入力ボックス -->
+                            <TextBox x:Name="UrlLineEdit" Grid.Column="1" 
+                                     BorderThickness="0" 
+                                     Background="Transparent"
+                                     VerticalAlignment="Center"
+                                     Padding="0,3"
+                                     KeyDown="UrlLineEdit_KeyDown"/>
+                        </Grid>
+                    </Border>
+
+                    <Button x:Name="GoButton" Grid.Column="5" Content="移動" Margin="2" Click="GoButton_Click"/>
+                    <Button x:Name="NewTabButton" Grid.Column="6" Content="+" Width="30" FontSize="16" 
+                            ToolTip="新しいタブ (Ctrl+T)" Margin="5,2,2,2" Click="CreateNewTabButton_Click"/>
+                </Grid>
+
+                <!-- プログレスバー -->
+                <ProgressBar x:Name="WebProgressBar" Grid.Row="1" Height="2" 
+                             Background="Transparent" Foreground="#da4453"/>
+
+                <!-- タブコントロール -->
+                <TabControl x:Name="TabWidget" Grid.Row="2" Margin="2">
+                    <!-- タブは動的に追加 -->
+                    <TabControl.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="新しいタブ(_N)" InputGestureText="Ctrl+T" Click="NewTabMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Text="+" FontWeight="Bold"/>
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <Separator/>
+                            <MenuItem Header="タブを閉じる(_C)" InputGestureText="Ctrl+W" Click="CloseTabMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Text="×" FontWeight="Bold"/>
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="他のタブを閉じる(_O)" Click="CloseOtherTabsMenuItem_Click"/>
+                            <Separator/>
+                            <MenuItem Header="タブを複製(_D)" Click="DuplicateTabMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Text="⧉" FontWeight="Bold"/>
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="新しいウィンドウで開く(_W)" Click="NewWindowMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Text="🗔" FontWeight="Bold"/>
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <Separator/>
+                            <MenuItem Header="タブ復元(_R)" InputGestureText="Ctrl+Shift+T" IsEnabled="False" Click="RestoreLastClosedTabMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Text="↶" FontWeight="Bold"/>
+                                </MenuItem.Icon>
+                            </MenuItem>
+                        </ContextMenu>
+                    </TabControl.ContextMenu>
+                </TabControl>
             </Grid>
-        </Border>
+
+            <!-- 右側：自動購入コントロールパネル -->
+            <Border Grid.Column="1" Background="LightGray" Margin="2,2,2,2">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- ヘッダー -->
+                    <Border Grid.Row="0" Background="DarkBlue" Padding="5">
+                        <TextBlock Text="fastBOT 自動購入システム" 
+                                   Foreground="White" FontWeight="Bold" FontSize="12" 
+                                   HorizontalAlignment="Center"/>
+                    </Border>
+
+                    <!-- 自動購入コントロール -->
+                    <local:AutoPurchaseControl x:Name="AutoPurchaseControlPanel" 
+                                              Grid.Row="1" 
+                                              Background="White"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ステータスバー -->
+        <StatusBar Grid.Row="1" Style="{StaticResource StatusBarStyle}">
+            <StatusBarItem Style="{StaticResource StatusBarItemStyle}">
+                <TextBlock x:Name="MainStatusText" Text="Ready" FontWeight="Normal"/>
+            </StatusBarItem>
+
+            <Separator Style="{StaticResource StatusSeparatorStyle}"/>
+
+            <StatusBarItem Style="{StaticResource StatusBarItemStyle}">
+                <TextBlock x:Name="RequestContextInfo" Text="Context: Default"/>
+            </StatusBarItem>
+
+            <Separator Style="{StaticResource StatusSeparatorStyle}"/>
+
+            <StatusBarItem Style="{StaticResource StatusBarItemStyle}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Instance: "/>
+                    <TextBlock x:Name="InstanceNumberText" Text="1"/>
+                </StackPanel>
+            </StatusBarItem>
+
+            <Separator Style="{StaticResource StatusSeparatorStyle}"/>
+
+            <StatusBarItem Style="{StaticResource StatusBarItemStyle}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Cache: "/>
+                    <TextBlock x:Name="CacheSizeText" Text="0 MB"/>
+                </StackPanel>
+            </StatusBarItem>
+
+            <Separator Style="{StaticResource StatusSeparatorStyle}"/>
+
+            <StatusBarItem Style="{StaticResource StatusBarItemStyle}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Tabs: "/>
+                    <TextBlock x:Name="TabCountText" Text="1"/>
+                </StackPanel>
+            </StatusBarItem>
+
+            <!-- 右側に配置される要素 -->
+            <StatusBarItem HorizontalAlignment="Right" Style="{StaticResource StatusBarItemStyle}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="TimeStampText" Text=""/>
+                </StackPanel>
+            </StatusBarItem>
+        </StatusBar>
     </Grid>
 </Window>

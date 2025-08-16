@@ -298,16 +298,17 @@ namespace CefSharp.fastBOT
                     var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
 
                     SaveUIToAccount(account);
-                    account.IsActive = true; // データが入力されたアカウントは有効化
+                    account.IsActive = true;
 
                     await _accountManager.UpdateAccountAsync(account);
                     RefreshAccountComboBox();
-                    UpdateStatus($"アカウント{selectedAccountNumber}の情報を保存しました");
+
+                    ShowSuccess($"アカウント{selectedAccountNumber}の情報を保存しました");
                 }
             }
             catch (Exception ex)
             {
-                UpdateStatus($"アカウント保存エラー: {ex.Message}");
+                ShowError($"アカウント保存エラー: {ex.Message}");
             }
         }
 
@@ -390,32 +391,40 @@ namespace CefSharp.fastBOT
 
             try
             {
-                UpdateStatus("自動ログインを開始します...");
+                UpdateProgress(1, 4, "自動ログインを開始します...");
 
                 var loginId = LoginEdit.Text;
                 var password = PasswordEdit.Password;
 
                 if (string.IsNullOrEmpty(loginId) || string.IsNullOrEmpty(password))
                 {
-                    UpdateStatus("ログインIDとパスワードを入力してください");
+                    ShowError("ログインIDとパスワードを入力してください");
+                    ProgressBar.Value = 0;
                     return;
                 }
 
+                UpdateProgress(2, 4, "ログイン情報を送信中...");
                 bool success = await _automationService.AutoLoginAsync(loginId, password);
 
                 if (success)
                 {
-                    UpdateStatus("ログインを実行しました");
-                    ProgressBar.Value = 3;
+                    UpdateProgress(4, 4, "ログインが完了しました");
+                    ShowSuccess("ログインを実行しました");
+
+                    // 少し待ってからプログレスバーをリセット
+                    await Task.Delay(2000);
+                    ProgressBar.Value = 0;
                 }
                 else
                 {
-                    UpdateStatus("ログインに失敗しました");
+                    ProgressBar.Value = 0;
+                    ShowError("ログインに失敗しました");
                 }
             }
             catch (Exception ex)
             {
-                UpdateStatus($"ログインエラー: {ex.Message}");
+                ProgressBar.Value = 0;
+                ShowError($"ログインエラー: {ex.Message}");
             }
         }
 
@@ -426,47 +435,45 @@ namespace CefSharp.fastBOT
             try
             {
                 StartButton.IsEnabled = false;
-                UpdateStatus("自動購入を開始します...");
-                ProgressBar.Value = 1;
+                UpdateProgress(1, 11, "自動購入を開始します...");
 
                 // 1. ページ読み込み待機
-                UpdateStatus("ページ読み込み待機中...");
+                UpdateProgress(2, 11, "ページ読み込み待機中...");
                 await _automationService.WaitForPageLoadAsync(30);
-                ProgressBar.Value = 2;
 
                 // 2. ログイン情報の自動入力
                 if (!string.IsNullOrEmpty(LoginEdit.Text) && !string.IsNullOrEmpty(PasswordEdit.Password))
                 {
-                    UpdateStatus("ログイン中...");
+                    UpdateProgress(4, 11, "ログイン中...");
                     await _automationService.AutoLoginAsync(LoginEdit.Text, PasswordEdit.Password);
-                    ProgressBar.Value = 4;
                 }
 
                 // 3. チケット選択画面へ遷移
-                UpdateStatus("チケット選択画面へ移動中...");
+                UpdateProgress(6, 11, "チケット選択画面へ移動中...");
                 await Task.Delay(2000);
-                ProgressBar.Value = 6;
 
                 // 4. チケット自動選択
-                UpdateStatus("チケットを選択中...");
+                UpdateProgress(8, 11, "チケットを選択中...");
                 await Task.Delay(2000);
-                ProgressBar.Value = 8;
 
                 // 5. 購入者情報入力
-                UpdateStatus("購入者情報を入力中...");
+                UpdateProgress(10, 11, "購入者情報を入力中...");
                 await FillPurchaserInfo();
-                ProgressBar.Value = 10;
 
                 // 6. 最終確認
-                UpdateStatus("購入処理完了待機中...");
+                UpdateProgress(11, 11, "購入処理完了待機中...");
                 await _automationService.WaitForElementAsync(".purchase-complete, .order-complete", 60);
-                ProgressBar.Value = 11;
 
-                UpdateStatus("自動購入処理が完了しました");
+                ShowSuccess("自動購入処理が完了しました");
+
+                // 完了後にプログレスバーをリセット
+                await Task.Delay(3000);
+                ProgressBar.Value = 0;
             }
             catch (Exception ex)
             {
-                UpdateStatus($"自動購入エラー: {ex.Message}");
+                ProgressBar.Value = 0;
+                ShowError($"自動購入エラー: {ex.Message}");
             }
             finally
             {
@@ -476,9 +483,16 @@ namespace CefSharp.fastBOT
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
-            StartButton.IsEnabled = true;
-            ProgressBar.Value = 0;
-            UpdateStatus("自動購入を停止しました");
+            try
+            {
+                StartButton.IsEnabled = true;
+                ProgressBar.Value = 0;
+                ShowSuccess("自動購入を停止しました");
+            }
+            catch (Exception ex)
+            {
+                ShowError($"停止処理エラー: {ex.Message}");
+            }
         }
 
         private async Task FillPurchaserInfo()
@@ -533,45 +547,69 @@ namespace CefSharp.fastBOT
             try
             {
                 string proxyText = ProxyLineEdit.Text.Trim();
+                Console.WriteLine($"プロキシ設定適用開始: '{proxyText}'");
+
+                var currentBrowser = BrowserTabManager?.GetCurrentBrowser();
+                if (currentBrowser == null)
+                {
+                    ShowError("ブラウザが見つかりません");
+                    return;
+                }
 
                 if (string.IsNullOrEmpty(proxyText))
                 {
-                    var currentBrowser = BrowserTabManager?.GetCurrentBrowser();
-                    if (currentBrowser != null)
+                    // プロキシを無効化
+                    Console.WriteLine("プロキシを無効化中...");
+                    bool disableSuccess = await _proxyManager.DisableProxyAsync(currentBrowser);
+
+                    if (disableSuccess)
                     {
-                        await _proxyManager.DisableProxyAsync(currentBrowser);
                         UpdateProxyStatus("Proxy無効");
+                        ShowSuccess("Proxyを無効にしました");
+                    }
+                    else
+                    {
+                        ShowError("Proxy無効化に失敗しました");
                     }
                     return;
                 }
 
                 var proxyConfig = ParseProxyText(proxyText);
-                if (proxyConfig != null)
+                if (proxyConfig == null)
                 {
-                    var currentBrowser = BrowserTabManager?.GetCurrentBrowser();
-                    if (currentBrowser != null)
-                    {
-                        bool success = await _proxyManager.SetProxyAsync(currentBrowser, proxyConfig);
+                    ShowError("Proxy形式が不正です\n例: 127.0.0.1:8080 または 127.0.0.1:8080:user:pass");
+                    return;
+                }
 
-                        if (success)
-                        {
-                            UpdateProxyStatus($"Proxy: {proxyConfig.Host}:{proxyConfig.Port}");
-                            UpdateStatus("Proxy設定を適用しました");
-                        }
-                        else
-                        {
-                            UpdateStatus("Proxy設定に失敗しました");
-                        }
+                Console.WriteLine($"プロキシ設定適用中: {proxyConfig}");
+                bool success = await _proxyManager.SetProxyAsync(currentBrowser, proxyConfig);
+
+                if (success)
+                {
+                    UpdateProxyStatus($"Proxy: {proxyConfig.Host}:{proxyConfig.Port}");
+                    ShowSuccess("Proxy設定を適用しました");
+
+                    // プロキシテストを実行（オプション）
+                    Console.WriteLine("プロキシテスト実行中...");
+                    bool testResult = await _proxyManager.TestProxyAsync(currentBrowser);
+                    if (testResult)
+                    {
+                        ShowSuccess("プロキシテスト成功");
+                    }
+                    else
+                    {
+                        ShowError("プロキシテスト失敗 - 設定を確認してください");
                     }
                 }
                 else
                 {
-                    UpdateStatus("Proxy形式が不正です (例: 127.0.0.1:8080:user:pass)");
+                    ShowError("Proxy設定に失敗しました");
                 }
             }
             catch (Exception ex)
             {
-                UpdateStatus($"Proxy設定エラー: {ex.Message}");
+                Console.WriteLine($"ApplyProxySettingsエラー: {ex.Message}");
+                ShowError($"Proxy設定エラー: {ex.Message}");
             }
         }
 
@@ -579,25 +617,35 @@ namespace CefSharp.fastBOT
         {
             try
             {
-                var parts = proxyText.Split(':');
-                if (parts.Length < 2) return null;
-
-                var config = new ProxyConfig
+                if (string.IsNullOrWhiteSpace(proxyText))
                 {
-                    Host = parts[0],
-                    Port = int.Parse(parts[1])
-                };
-
-                if (parts.Length >= 4)
-                {
-                    config.Username = parts[2];
-                    config.Password = parts[3];
+                    Console.WriteLine("プロキシテキストが空です");
+                    return null;
                 }
 
+                Console.WriteLine($"プロキシテキストをパース中: {proxyText}");
+
+                // ProxyConfig.Parseメソッドを使用
+                var config = ProxyConfig.Parse(proxyText);
+
+                if (config == null)
+                {
+                    Console.WriteLine("プロキシテキストのパースに失敗");
+                    return null;
+                }
+
+                if (!config.IsValid())
+                {
+                    Console.WriteLine("無効なプロキシ設定");
+                    return null;
+                }
+
+                Console.WriteLine($"パース結果: {config}");
                 return config;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"ParseProxyTextエラー: {ex.Message}");
                 return null;
             }
         }
@@ -872,15 +920,33 @@ namespace CefSharp.fastBOT
 
         #endregion
 
-        #region UI更新メソッド
+        #region UIステータス更新メソッド（MainWindowステータスバー連携版）
 
-        private void UpdateStatus(string message)
+        /// <summary>
+        /// MainWindowの参照を保持するプロパティ
+        /// </summary>
+        public MainWindow ParentMainWindow { get; set; }
+
+        /// <summary>
+        /// メインステータスを更新（MainWindowのステータスバーと連携）
+        /// </summary>
+        /// <param name="message">ステータスメッセージ</param>
+        public void UpdateStatus(string message)
         {
             try
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    StatusText.Text = $"{DateTime.Now:HH:mm:ss} - {message}";
+                    // MainWindowのステータスバーを更新
+                    if (ParentMainWindow != null)
+                    {
+                        ParentMainWindow.UpdateMainStatus(message);
+                    }
+                    else
+                    {
+                        // フォールバック：コンソールに出力
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+                    }
                 });
             }
             catch (Exception ex)
@@ -889,13 +955,26 @@ namespace CefSharp.fastBOT
             }
         }
 
+        /// <summary>
+        /// Proxyステータスを更新
+        /// </summary>
+        /// <param name="message">Proxyステータスメッセージ</param>
         private void UpdateProxyStatus(string message)
         {
             try
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    ProxyStatusText.Text = message;
+                    if (ProxyStatusText != null)
+                    {
+                        ProxyStatusText.Text = message;
+                    }
+
+                    // MainWindowにも通知
+                    if (ParentMainWindow != null)
+                    {
+                        ParentMainWindow.ShowLogMessage($"Proxy: {message}", 2000);
+                    }
                 });
             }
             catch (Exception ex)
@@ -904,13 +983,26 @@ namespace CefSharp.fastBOT
             }
         }
 
+        /// <summary>
+        /// HTML解析ステータスを更新
+        /// </summary>
+        /// <param name="message">HTML解析ステータスメッセージ</param>
         private void UpdateHtmlStatus(string message)
         {
             try
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    HtmlStatusText.Text = $"解析: {message}";
+                    if (HtmlStatusText != null)
+                    {
+                        HtmlStatusText.Text = $"解析: {message}";
+                    }
+
+                    // MainWindowにも通知
+                    if (ParentMainWindow != null)
+                    {
+                        ParentMainWindow.ShowLogMessage($"HTML解析: {message}", 2000);
+                    }
                 });
             }
             catch (Exception ex)
@@ -918,6 +1010,11 @@ namespace CefSharp.fastBOT
                 Console.WriteLine($"UpdateHtmlStatus error: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// アカウントステータスを更新
+        /// </summary>
+        /// <param name="account">現在のアカウント情報</param>
         private void UpdateAccountStatus(AccountInfo account)
         {
             try
@@ -935,11 +1032,102 @@ namespace CefSharp.fastBOT
                             AccountStatusText.Text = "アカウント: 未選択";
                         }
                     }
+
+                    // MainWindowにも通知
+                    if (ParentMainWindow != null)
+                    {
+                        var statusMessage = account != null
+                            ? $"アカウント: {account.GetDisplayText()}"
+                            : "アカウント: 未選択";
+                        ParentMainWindow.ShowLogMessage(statusMessage, 2000);
+                    }
                 });
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"UpdateAccountStatus error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// エラーメッセージを表示
+        /// </summary>
+        /// <param name="errorMessage">エラーメッセージ</param>
+        public void ShowError(string errorMessage)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (ParentMainWindow != null)
+                    {
+                        ParentMainWindow.ShowErrorMessage(errorMessage);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[ERROR] {errorMessage}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ShowError error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 成功メッセージを表示
+        /// </summary>
+        /// <param name="successMessage">成功メッセージ</param>
+        public void ShowSuccess(string successMessage)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (ParentMainWindow != null)
+                    {
+                        ParentMainWindow.ShowSuccessMessage(successMessage);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[SUCCESS] {successMessage}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ShowSuccess error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 進捗状況を更新
+        /// </summary>
+        /// <param name="step">現在のステップ</param>
+        /// <param name="totalSteps">総ステップ数</param>
+        /// <param name="message">進捗メッセージ</param>
+        public void UpdateProgress(int step, int totalSteps, string message)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    // プログレスバーを更新
+                    if (ProgressBar != null)
+                    {
+                        ProgressBar.Value = step;
+                        ProgressBar.Maximum = totalSteps;
+                    }
+
+                    // ステータスメッセージを更新
+                    var progressMessage = $"[{step}/{totalSteps}] {message}";
+                    UpdateStatus(progressMessage);
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateProgress error: {ex.Message}");
             }
         }
 

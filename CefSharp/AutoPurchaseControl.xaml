@@ -2,6 +2,53 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <UserControl.Resources>
+        <!-- ComboBoxのスタイルを明示的に定義してバインディングエラーを完全に回避 -->
+        <Style x:Key="FixedComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="Gray"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,3"/>
+        </Style>
+
+        <Style x:Key="FixedComboBoxItemStyle" TargetType="ComboBoxItem">
+            <!-- バインディングエラーを防ぐため、直接値を設定 -->
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border Name="ItemBorder" 
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <!-- ContentPresenterでバインディングを使わず、直接値を設定 -->
+                            <ContentPresenter HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#E3F2FD"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#BBDEFB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="Gray"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="5">
 
@@ -13,7 +60,9 @@
                 <StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,2">
                         <Label Content="選択:" Width="50"/>
-                        <ComboBox x:Name="AccountComboBox" Width="200" Margin="2,0"/>
+                        <ComboBox x:Name="AccountComboBox" Width="200" Margin="2,0"
+                                  Style="{StaticResource FixedComboBoxStyle}"
+                                  ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
                         <TextBlock Text="※選択で即座に切り替わります" 
                                    VerticalAlignment="Center" Margin="10,0" 
                                    Foreground="Gray" FontSize="10"/>
@@ -153,9 +202,13 @@
 
                     <Label Grid.Row="1" Grid.Column="0" Content="有効期限:"/>
                     <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
-                        <ComboBox x:Name="MonthComboBox" Width="50"/>
+                        <ComboBox x:Name="MonthComboBox" Width="50"
+                                  Style="{StaticResource FixedComboBoxStyle}"
+                                  ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
                         <Label Content="月"/>
-                        <ComboBox x:Name="YearComboBox" Width="60"/>
+                        <ComboBox x:Name="YearComboBox" Width="60"
+                                  Style="{StaticResource FixedComboBoxStyle}"
+                                  ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
                         <Label Content="年"/>
                     </StackPanel>
 
@@ -175,7 +228,9 @@
 
                     <StackPanel Orientation="Horizontal" Margin="0,5">
                         <Label Content="購入枚数:"/>
-                        <ComboBox x:Name="NumComboBox" Width="60">
+                        <ComboBox x:Name="NumComboBox" Width="60"
+                                  Style="{StaticResource FixedComboBoxStyle}"
+                                  ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}">
                             <ComboBoxItem Content="1"/>
                             <ComboBoxItem Content="2"/>
                         </ComboBox>
@@ -201,14 +256,12 @@
                 </StackPanel>
             </GroupBox>
 
-            <!-- 購入状況・ログ -->
-            <GroupBox Header="購入状況・ログ" Margin="0,5">
+            <!-- システム状態表示 -->
+            <GroupBox Header="システム状態" Margin="0,5">
                 <StackPanel>
-                    <TextBlock x:Name="StatusText" Text="Ready" Margin="0,2"/>
                     <TextBlock x:Name="ProxyStatusText" Text="Proxy: 未設定" Margin="0,2"/>
-                    <TextBlock x:Name="RequestContextInfo" Text="Context: Default" Margin="0,2"/>
-                    <TextBlock x:Name="HtmlStatusText" Text="解析: 未実行" Margin="0,2"/>
                     <TextBlock x:Name="AccountStatusText" Text="アカウント: 未選択" Margin="0,2"/>
+                    <TextBlock x:Name="HtmlStatusText" Text="解析: 未実行" Margin="0,2"/>
                 </StackPanel>
             </GroupBox>
         </StackPanel>

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -36,6 +37,30 @@ namespace CefSharp.fastBOT
         #region 初期化
 
         /// <summary>
+        /// AutoPurchaseControlとの連携を設定
+        /// </summary>
+        private void SetupAutoPurchaseControlIntegration()
+        {
+            try
+            {
+                if (AutoPurchaseControlPanel != null)
+                {
+                    // AutoPurchaseControlに親ウィンドウの参照を設定
+                    AutoPurchaseControlPanel.ParentMainWindow = this;
+
+                    // ブラウザサービスを設定
+                    AutoPurchaseControlPanel.SetBrowserServices(_tabManager, _requestContextManager);
+
+                    Console.WriteLine("AutoPurchaseControl integration setup completed");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SetupAutoPurchaseControlIntegration error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// 基本的なマネージャーを初期化
         /// </summary>
         private void InitializeManagers()
@@ -51,6 +76,9 @@ namespace CefSharp.fastBOT
 
                 // タブコンテキストメニューの設定
                 SetupTabContextMenu();
+
+                // AutoPurchaseControlとの連携を設定
+                SetupAutoPurchaseControlIntegration();
 
                 Console.WriteLine("MainWindow managers initialized successfully");
             }
@@ -156,6 +184,12 @@ namespace CefSharp.fastBOT
                 // ボタンの初期状態を設定
                 UpdateButtonStates();
 
+                // ステータスバー関連の初期化
+                UpdateMainStatus("fastBOT initialized");
+                UpdateAllStatusInfo();
+                StartStatusBarTimer();
+                SetupStatusBarContextMenu();
+
                 UpdateStatus("fastBOT initialized");
                 Console.WriteLine("UI initialized successfully");
             }
@@ -179,6 +213,12 @@ namespace CefSharp.fastBOT
                 {
                     // ブラウザイベントの設定
                     SetupBrowserEvents(tab.Browser);
+
+                    // AutoPurchaseControlにブラウザサービスを設定
+                    if (AutoPurchaseControlPanel != null)
+                    {
+                        AutoPurchaseControlPanel.SetBrowserServices(_tabManager, _requestContextManager);
+                    }
 
                     // デフォルトのFaviconを設定（UIスレッドで実行）
                     Application.Current.Dispatcher.Invoke(() =>
@@ -214,34 +254,28 @@ namespace CefSharp.fastBOT
         {
             if (browser == null) return;
 
-            // ブラウザ初期化完了イベント
+            // 既存のイベント設定...
             browser.IsBrowserInitializedChanged += Browser_IsBrowserInitializedChanged;
-
-            // アドレス変更イベント
             browser.AddressChanged += Browser_AddressChanged;
-
-            // タイトル変更イベント
             browser.TitleChanged += (sender, args) =>
             {
                 Console.WriteLine($"Page title changed: {args.NewValue}");
             };
 
-            // 読み込み状態変更イベント（ナビゲーション状態の監視用）
+            // 読み込み状態変更イベント
             browser.LoadingStateChanged += (sender, args) =>
             {
                 try
                 {
-                    // UIスレッドで安全にボタン状態を更新
                     Dispatcher.Invoke(() =>
                     {
-                        // LoadingStateChangedEventArgsから直接ナビゲーション状態を取得
                         UpdateNavigationButtonStates(args.CanGoBack, args.CanGoForward, args.CanReload);
-
-                        Console.WriteLine($"Navigation state updated - CanGoBack: {args.CanGoBack}, CanGoForward: {args.CanGoForward}, IsLoading: {args.IsLoading}");
 
                         if (!args.IsLoading)
                         {
-                            // 読み込み完了後、少し遅延してFaviconを取得
+                            ShowLogMessage("ページ読み込み完了", 2000);
+
+                            // 少し遅延してFaviconを取得
                             Task.Delay(500).ContinueWith(_ =>
                             {
                                 try
@@ -272,6 +306,10 @@ namespace CefSharp.fastBOT
                                     Console.WriteLine($"Favicon task error: {ex.Message}");
                                 }
                             }, TaskScheduler.Current);
+                        }
+                        else
+                        {
+                            ShowLogMessage("ページ読み込み中...", 1000);
                         }
                     });
                 }
@@ -604,12 +642,20 @@ namespace CefSharp.fastBOT
                     // ブラウザイベントの設定
                     SetupBrowserEvents(tab.Browser);
 
-                    UpdateStatus("新しいタブを作成しました");
+                    // AutoPurchaseControlにブラウザサービスを更新
+                    if (AutoPurchaseControlPanel != null)
+                    {
+                        AutoPurchaseControlPanel.SetBrowserServices(_tabManager, _requestContextManager);
+                    }
+
+                    // タブ数を更新
+                    UpdateTabCount();
+                    UpdateMainStatus("新しいタブを作成しました");
                 }
             }
             catch (Exception ex)
             {
-                UpdateStatus($"新しいタブの作成に失敗しました: {ex.Message}");
+                ShowErrorMessage($"新しいタブの作成に失敗しました: {ex.Message}");
             }
         }
 
@@ -621,21 +667,29 @@ namespace CefSharp.fastBOT
             try
             {
                 var currentTab = _tabManager.GetCurrentTab();
-                if (currentTab != null && _tabManager.TabCount > 1) // 最後のタブは閉じない
+                if (currentTab != null && _tabManager.TabCount > 1)
                 {
                     _tabManager.CloseTab(currentTab);
-                    UpdateStatus("タブを閉じました");
-                    // タブを閉じた後にボタン状態を更新
+
+                    // AutoPurchaseControlにブラウザサービスを更新
+                    if (AutoPurchaseControlPanel != null)
+                    {
+                        AutoPurchaseControlPanel.SetBrowserServices(_tabManager, _requestContextManager);
+                    }
+
+                    // タブ数を更新
+                    UpdateTabCount();
+                    UpdateMainStatus("タブを閉じました");
                     UpdateButtonStates();
                 }
                 else if (_tabManager.TabCount == 1)
                 {
-                    UpdateStatus("最後のタブは閉じることができません");
+                    ShowLogMessage("最後のタブは閉じることができません", 3000);
                 }
             }
             catch (Exception ex)
             {
-                UpdateStatus($"タブを閉じる際にエラーが発生しました: {ex.Message}");
+                ShowErrorMessage($"タブを閉じる際にエラーが発生しました: {ex.Message}");
             }
         }
 
@@ -831,24 +885,7 @@ namespace CefSharp.fastBOT
 
         private void UpdateStatus(string message)
         {
-            try
-            {
-                // StatusTextコントロールが存在する場合のみ更新
-                var statusText = this.FindName("StatusText") as TextBlock;
-                if (statusText != null)
-                {
-                    statusText.Text = $"{DateTime.Now:HH:mm:ss} - {message}";
-                }
-                else
-                {
-                    // StatusTextが存在しない場合はコンソールに出力
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateStatus error: {ex.Message}");
-            }
+            UpdateMainStatus(message);
         }
 
         private void UpdateRequestContextInfo()
@@ -1394,6 +1431,364 @@ namespace CefSharp.fastBOT
         }
 
         #endregion
+
+        #region ステータスバー管理
+
+        /// <summary>
+        /// メインステータスメッセージを更新
+        /// </summary>
+        /// <param name="message">表示するメッセージ</param>
+        /// <param name="showTimestamp">タイムスタンプを表示するかどうか</param>
+        public void UpdateMainStatus(string message, bool showTimestamp = true)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var mainStatusText = this.FindName("MainStatusText") as TextBlock;
+                    var timeStampText = this.FindName("TimeStampText") as TextBlock;
+
+                    if (mainStatusText != null)
+                    {
+                        mainStatusText.Text = message;
+                    }
+
+                    if (timeStampText != null && showTimestamp)
+                    {
+                        timeStampText.Text = DateTime.Now.ToString("HH:mm:ss");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateMainStatus error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// インスタンス番号を更新
+        /// </summary>
+        private void UpdateInstanceNumber()
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var instanceNumberText = this.FindName("InstanceNumberText") as TextBlock;
+
+                    if (instanceNumberText != null)
+                    {
+                        var instanceNumber = _requestContextManager?.GetInstanceNumber() ?? 0;
+                        instanceNumberText.Text = instanceNumber.ToString();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateInstanceNumber error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// キャッシュサイズを更新
+        /// </summary>
+        private void UpdateCacheSize()
+        {
+            try
+            {
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        var cacheSize = _requestContextManager?.GetCacheSize() ?? 0;
+                        var formattedSize = FormatBytes(cacheSize);
+
+                        await Application.Current.Dispatcher.InvokeAsync(() =>
+                        {
+                            var cacheSizeText = this.FindName("CacheSizeText") as TextBlock;
+                            if (cacheSizeText != null)
+                            {
+                                cacheSizeText.Text = formattedSize;
+                            }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"UpdateCacheSize background task error: {ex.Message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateCacheSize error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// タブ数を更新
+        /// </summary>
+        private void UpdateTabCount()
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var tabCountText = this.FindName("TabCountText") as TextBlock;
+
+                    if (tabCountText != null)
+                    {
+                        var tabCount = _tabManager?.TabCount ?? 0;
+                        tabCountText.Text = tabCount.ToString();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateTabCount error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 全ステータス情報を更新
+        /// </summary>
+        public void UpdateAllStatusInfo()
+        {
+            try
+            {
+                UpdateRequestContextInfo();
+                UpdateInstanceNumber();
+                UpdateCacheSize();
+                UpdateTabCount();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateAllStatusInfo error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// ステータスバーの定期更新を開始
+        /// </summary>
+        private void StartStatusBarTimer()
+        {
+            try
+            {
+                var statusTimer = new System.Windows.Threading.DispatcherTimer();
+                statusTimer.Interval = TimeSpan.FromSeconds(5); // 5秒間隔で更新
+                statusTimer.Tick += (s, e) =>
+                {
+                    try
+                    {
+                        UpdateCacheSize();
+                        UpdateTabCount();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Status timer tick error: {ex.Message}");
+                    }
+                };
+                statusTimer.Start();
+
+                Console.WriteLine("Status bar timer started");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"StartStatusBarTimer error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// ログメッセージをステータスバーに表示（一時的表示）
+        /// </summary>
+        /// <param name="message">ログメッセージ</param>
+        /// <param name="duration">表示時間（ミリ秒）</param>
+        public void ShowLogMessage(string message, int duration = 3000)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var originalMessage = (this.FindName("MainStatusText") as TextBlock)?.Text ?? "Ready";
+
+                    // 一時的にログメッセージを表示
+                    UpdateMainStatus(message, true);
+
+                    // 指定時間後に元のメッセージに戻す
+                    var timer = new System.Windows.Threading.DispatcherTimer();
+                    timer.Interval = TimeSpan.FromMilliseconds(duration);
+                    timer.Tick += (s, e) =>
+                    {
+                        timer.Stop();
+                        UpdateMainStatus(originalMessage, false);
+                    };
+                    timer.Start();
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ShowLogMessage error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// エラーメッセージをステータスバーに表示
+        /// </summary>
+        /// <param name="errorMessage">エラーメッセージ</param>
+        public void ShowErrorMessage(string errorMessage)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var mainStatusText = this.FindName("MainStatusText") as TextBlock;
+
+                    if (mainStatusText != null)
+                    {
+                        // エラーメッセージは赤色で表示
+                        mainStatusText.Foreground = Brushes.Red;
+                        mainStatusText.Text = $"エラー: {errorMessage}";
+
+                        var timeStampText = this.FindName("TimeStampText") as TextBlock;
+                        if (timeStampText != null)
+                        {
+                            timeStampText.Text = DateTime.Now.ToString("HH:mm:ss");
+                        }
+
+                        // 5秒後に色を元に戻す
+                        var timer = new System.Windows.Threading.DispatcherTimer();
+                        timer.Interval = TimeSpan.FromSeconds(5);
+                        timer.Tick += (s, e) =>
+                        {
+                            timer.Stop();
+                            if (mainStatusText != null)
+                            {
+                                mainStatusText.Foreground = Brushes.Black;
+                            }
+                        };
+                        timer.Start();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ShowErrorMessage error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 成功メッセージをステータスバーに表示
+        /// </summary>
+        /// <param name="successMessage">成功メッセージ</param>
+        public void ShowSuccessMessage(string successMessage)
+        {
+            try
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var mainStatusText = this.FindName("MainStatusText") as TextBlock;
+
+                    if (mainStatusText != null)
+                    {
+                        // 成功メッセージは緑色で表示
+                        mainStatusText.Foreground = Brushes.Green;
+                        mainStatusText.Text = successMessage;
+
+                        var timeStampText = this.FindName("TimeStampText") as TextBlock;
+                        if (timeStampText != null)
+                        {
+                            timeStampText.Text = DateTime.Now.ToString("HH:mm:ss");
+                        }
+
+                        // 3秒後に色を元に戻す
+                        var timer = new System.Windows.Threading.DispatcherTimer();
+                        timer.Interval = TimeSpan.FromSeconds(3);
+                        timer.Tick += (s, e) =>
+                        {
+                            timer.Stop();
+                            if (mainStatusText != null)
+                            {
+                                mainStatusText.Foreground = Brushes.Black;
+                            }
+                        };
+                        timer.Start();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ShowSuccessMessage error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// ステータスバーのコンテキストメニューを設定
+        /// </summary>
+        private void SetupStatusBarContextMenu()
+        {
+            try
+            {
+                var statusBar = this.FindName("StatusBar") as StatusBar;
+                if (statusBar == null) return;
+
+                var contextMenu = new ContextMenu();
+
+                // キャッシュクリアメニュー
+                var clearCacheItem = new MenuItem
+                {
+                    Header = "キャッシュをクリア(_C)",
+                    Icon = new TextBlock { Text = "🗑", FontSize = 12 }
+                };
+                clearCacheItem.Click += (s, e) =>
+                {
+                    try
+                    {
+                        var result = ClearCurrentInstanceCache();
+                        if (result)
+                        {
+                            ShowSuccessMessage("キャッシュをクリアしました");
+                            UpdateCacheSize();
+                        }
+                        else
+                        {
+                            ShowErrorMessage("キャッシュクリアに失敗しました");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ShowErrorMessage($"キャッシュクリアエラー: {ex.Message}");
+                    }
+                };
+                contextMenu.Items.Add(clearCacheItem);
+
+                // インスタンス管理情報表示メニュー
+                var showInstanceInfoItem = new MenuItem
+                {
+                    Header = "インスタンス情報を表示(_I)",
+                    Icon = new TextBlock { Text = "ℹ", FontSize = 12 }
+                };
+                showInstanceInfoItem.Click += (s, e) => ShowInstanceManagementInfo();
+                contextMenu.Items.Add(showInstanceInfoItem);
+
+                contextMenu.Items.Add(new Separator());
+
+                // ステータス更新メニュー
+                var refreshStatusItem = new MenuItem
+                {
+                    Header = "ステータス更新(_R)",
+                    Icon = new TextBlock { Text = "🔄", FontSize = 12 }
+                };
+                refreshStatusItem.Click += (s, e) => UpdateAllStatusInfo();
+                contextMenu.Items.Add(refreshStatusItem);
+
+                statusBar.ContextMenu = contextMenu;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SetupStatusBarContextMenu error: {ex.Message}");
+            }
+        }
+
+#endregion
 
         #region Window終了処理
 

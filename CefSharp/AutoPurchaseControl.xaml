@@ -182,8 +182,9 @@
 
             <!-- クレジットカード -->
             <GroupBox Header="クレジットカード" Margin="0,5">
-                <Grid>
+                <Grid HorizontalAlignment="Left" Width="398">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -196,24 +197,27 @@
                     <Label Grid.Row="0" Grid.Column="0" Content="番号:"/>
                     <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
                         <TextBox x:Name="CardNumberLineEdit" Width="150"/>
-                        <Label Content="CVV"/>
-                        <TextBox x:Name="CvvLineEdit" Width="50"/>
                     </StackPanel>
 
                     <Label Grid.Row="1" Grid.Column="0" Content="有効期限:"/>
                     <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
                         <ComboBox x:Name="MonthComboBox" Width="50"
-                                  Style="{StaticResource FixedComboBoxStyle}"
-                                  ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
+                      Style="{StaticResource FixedComboBoxStyle}"
+                      ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
                         <Label Content="月"/>
                         <ComboBox x:Name="YearComboBox" Width="60"
-                                  Style="{StaticResource FixedComboBoxStyle}"
-                                  ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
+                      Style="{StaticResource FixedComboBoxStyle}"
+                      ItemContainerStyle="{StaticResource FixedComboBoxItemStyle}"/>
                         <Label Content="年"/>
                     </StackPanel>
 
-                    <Label Grid.Row="2" Grid.Column="0" Content="名義人:"/>
-                    <TextBox x:Name="CardNameLineEdit" Grid.Row="2" Grid.Column="1"/>
+                    <Label Grid.Row="2" Grid.Column="0" Content="CVV:"/>
+                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="CvvLineEdit" Width="50"/>
+                    </StackPanel>
+
+                    <Label Grid.Row="3" Grid.Column="0" Content="名義人:"/>
+                    <TextBox x:Name="CardNameLineEdit" Grid.Row="3" Grid.Column="1"/>
                 </Grid>
             </GroupBox>
 
@@ -222,7 +226,7 @@
                 <StackPanel>
                     <StackPanel Orientation="Horizontal">
                         <Label Content="対象公演"/>
-                        <CheckBox x:Name="AllCheckBox" Content="全て選択/解除" Margin="20,0,0,0"/>
+                        <CheckBox x:Name="AllCheckBox" Content="全て選択/解除" Margin="20,8,0,0"/>
                     </StackPanel>
                     <ListBox x:Name="EventListWidget" Height="120"/>
 

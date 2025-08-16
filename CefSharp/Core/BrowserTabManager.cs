@@ -1,5 +1,6 @@
 ﻿using CefSharp;
 using CefSharp.fastBOT.Models;
+using CefSharp.fastBOT.UI;
 using CefSharp.fastBOT.Utils;
 using CefSharp.Wpf;
 using System;

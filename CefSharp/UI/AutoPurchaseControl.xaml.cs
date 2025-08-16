@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 
-namespace CefSharp.fastBOT
+namespace CefSharp.fastBOT.UI
 {
     /// <summary>
     /// AutoPurchaseControl.xaml の相互作用ロジック

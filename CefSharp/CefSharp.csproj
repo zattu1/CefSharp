@@ -11,6 +11,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Page Remove="UI\App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Include="UI\App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="CefSharp.Wpf.NETCore" Version="138.0.340" />
     <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />

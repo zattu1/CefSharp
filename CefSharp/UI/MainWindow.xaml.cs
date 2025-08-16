@@ -13,7 +13,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
-namespace CefSharp.fastBOT
+namespace CefSharp.fastBOT.UI
 {
     /// <summary>
     /// MainWindow.xaml の相互作用ロジック（修正版）

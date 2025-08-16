@@ -1,12 +1,13 @@
-<Window x:Class="CefSharp.fastBOT.MainWindow"
+<Window x:Class="CefSharp.fastBOT.UI.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:cef="clr-namespace:CefSharp.Wpf;assembly=CefSharp.Wpf"
         xmlns:local="clr-namespace:CefSharp.fastBOT"
+        xmlns:ui="clr-namespace:CefSharp.fastBOT.UI"
         Title="fastBOT - チケット自動購入ブラウザ" 
         Height="854" Width="1200"
         WindowStartupLocation="CenterScreen"
-        Icon="Resources/fastBOT.ico">
+        Icon="pack://application:,,,/Resources/fastBOT.ico">
 
     <Window.Resources>
         <!-- ステータスバーのスタイル -->
@@ -202,7 +203,7 @@
                     </Border>
 
                     <!-- 自動購入コントロール -->
-                    <local:AutoPurchaseControl x:Name="AutoPurchaseControlPanel" 
+                    <ui:AutoPurchaseControl x:Name="AutoPurchaseControlPanel" 
                                               Grid.Row="1" 
                                               Background="White"/>
                 </Grid>

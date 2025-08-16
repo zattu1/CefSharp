@@ -1,19 +1,17 @@
-using CefSharp;
-using CefSharp.fastBOT.Utils;
-using CefSharp.Wpf;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Management;
-using System.Security.Cryptography;
-using System.Text;
+using System.Linq;
 using System.Windows;
+using System.Collections.Generic;
+using CefSharp;
+using CefSharp.Wpf;
+using CefSharp.fastBOT.Utils;
 
 namespace CefSharp.fastBOT
 {
     /// <summary>
-    /// App.xaml の相互作用ロジック
-    /// PC固有のキャッシュディレクトリでCEFを初期化（診断強化版）
+    /// App.xaml の相互作用ロジック（修正版）
+    /// インスタンス番号ベースのプロセス分離キャッシュ管理
     /// </summary>
     public partial class App : Application
     {
@@ -23,81 +21,68 @@ namespace CefSharp.fastBOT
         }
 
         /// <summary>
-        /// CefSharpを初期化（診断強化版）
+        /// CefSharpを初期化（プロセス毎のキャッシュ管理版）
         /// </summary>
         private void InitializeCefSharp()
         {
             try
             {
-                Console.WriteLine("=== CefSharp Initialization Start ===");
+                Console.WriteLine("=== CefSharp Initialization Start (Process-Separated Cache) ===");
 
-                // PC固有の識別子を生成
-                var pcIdentifier = GeneratePCIdentifier();
-                var instanceNumber = GetNextAvailableInstanceNumber(pcIdentifier);
+                // 起動順に基づくインスタンス番号を取得
+                var instanceNumber = GetNextAvailableInstanceNumber();
 
-                // PC + インスタンス番号固有のベースディレクトリを設定
-                var baseDirectory = Path.Combine(
+                Console.WriteLine($"Instance number: {instanceNumber}");
+
+                var settings = new CefSettings();
+
+                // インスタンス番号毎のキャッシュパス設定
+                string cachePath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT",
-                    "BrowserData",
-                    $"PC_{pcIdentifier}",
-                    $"Instance_{instanceNumber:D2}"
+                    "fastBOT", "Instance", instanceNumber.ToString()
                 );
+                settings.CachePath = cachePath;
 
-                // ディレクトリを作成
-                Directory.CreateDirectory(baseDirectory);
-                Console.WriteLine($"Cache directory created: {baseDirectory}");
+                // インスタンス毎のログファイル設定
+                settings.LogFile = Path.Combine(cachePath, "cef_debug.log");
 
-                var settings = new CefSettings()
-                {
-                    // ベースディレクトリをルートキャッシュパスとして設定
-                    CachePath = baseDirectory,
+                // 基本設定
+                settings.Locale = "ja";
+                settings.AcceptLanguageList = "ja-JP,ja,en-US,en";
+                settings.UserAgent = UserAgentHelper.GetChromeUserAgent();
 
-                    // 基本設定
-                    Locale = "ja",
-                    AcceptLanguageList = "ja-JP,ja,en-US,en",
-                    UserAgent = UserAgentHelper.GetChromeUserAgent(),
-
-                    // パフォーマンス設定
-                    MultiThreadedMessageLoop = false,
-
-                    // 診断用設定
-                    LogSeverity = LogSeverity.Info,
-                    LogFile = Path.Combine(baseDirectory, "cef_debug.log")
-                };
-
-                // 基本的なコマンドライン引数
+                // パフォーマンス設定（最小限）
                 settings.CefCommandLineArgs.Add("--disable-gpu-vsync");
                 settings.CefCommandLineArgs.Add("--max_old_space_size", "4096");
-                settings.CefCommandLineArgs.Add("--enable-media-stream");
-                settings.CefCommandLineArgs.Add("--enable-usermedia-screen-capturing");
 
-                // 診断・デバッグ用のコマンドライン引数
-                settings.CefCommandLineArgs.Add("--enable-logging");
-                settings.CefCommandLineArgs.Add("--log-level", "0");
-                settings.CefCommandLineArgs.Add("--v", "1");
-
-                // セキュリティを緩和（開発時のみ）
-                settings.CefCommandLineArgs.Add("--disable-web-security");
-                settings.CefCommandLineArgs.Add("--disable-features", "VizDisplayCompositor");
-                settings.CefCommandLineArgs.Add("--allow-running-insecure-content");
-
-                // GPU関連の問題を回避
-                settings.CefCommandLineArgs.Add("--disable-gpu");
+                // 安定性を重視した設定
                 settings.CefCommandLineArgs.Add("--disable-gpu-compositing");
-                settings.CefCommandLineArgs.Add("--disable-software-rasterizer");
+                settings.CefCommandLineArgs.Add("--disable-features", "VizDisplayCompositor");
+
+                // GCM関連のエラーを抑制
+                settings.CefCommandLineArgs.Add("--disable-background-networking");
+                settings.CefCommandLineArgs.Add("--disable-background-timer-throttling");
+                settings.CefCommandLineArgs.Add("--disable-backgrounding-occluded-windows");
+                settings.CefCommandLineArgs.Add("--disable-renderer-backgrounding");
+
+                // その他の不要な機能を無効化
+                settings.CefCommandLineArgs.Add("--disable-extensions");
+                settings.CefCommandLineArgs.Add("--disable-plugins");
+                settings.CefCommandLineArgs.Add("--disable-print-preview");
 
 #if DEBUG
-                settings.RemoteDebuggingPort = 8088;
-                Console.WriteLine("Remote debugging enabled on port 8088");
+                settings.RemoteDebuggingPort = 8088 + instanceNumber; // インスタンス毎に異なるポート
+                settings.LogSeverity = LogSeverity.Info;
+                Console.WriteLine($"Debug mode - Remote debugging enabled on port {8088 + instanceNumber}");
+#else
+                settings.LogSeverity = LogSeverity.Error;
 #endif
 
-                Console.WriteLine($"fastBOT: CefSharp initializing with:");
-                Console.WriteLine($"  PC identifier: {pcIdentifier}");
-                Console.WriteLine($"  Instance number: {instanceNumber}");
-                Console.WriteLine($"  Cache directory: {baseDirectory}");
-                Console.WriteLine($"  UserAgent: {settings.UserAgent}");
-                Console.WriteLine($"  Log file: {settings.LogFile}");
+                Console.WriteLine($"fastBOT: CefSharp initializing with cache: {cachePath}");
+                Console.WriteLine($"UserAgent: {settings.UserAgent}");
+
+                // インスタンスロックファイルを作成
+                CreateInstanceLockFile(instanceNumber);
 
                 // CefSharp初期化前の状態チェック
                 Console.WriteLine($"Before initialization - Cef.IsInitialized: {Cef.IsInitialized}");
@@ -112,21 +97,12 @@ namespace CefSharp.fastBOT
                     throw new InvalidOperationException("CefSharp initialization failed");
                 }
 
-                // 初期化後の診断情報
+                // CefSharp初期化後にシステム情報を出力
                 try
                 {
                     Console.WriteLine($"Cef version: {Cef.CefVersion}");
                     Console.WriteLine($"Chromium version: {Cef.ChromiumVersion}");
                     Console.WriteLine($"CefSharp version: {Cef.CefSharpVersion}");
-                }
-                catch (Exception diagEx)
-                {
-                    Console.WriteLine($"Diagnostic info error: {diagEx.Message}");
-                }
-
-                // CefSharp初期化後にシステム情報を出力
-                try
-                {
                     Console.WriteLine(UserAgentHelper.GetSystemInfo());
                 }
                 catch (Exception ex)
@@ -147,87 +123,95 @@ namespace CefSharp.fastBOT
         }
 
         /// <summary>
-        /// 利用可能なインスタンス番号を取得
+        /// 利用可能なインスタンス番号を取得（1, 2, 3...の順番）
         /// </summary>
-        private int GetNextAvailableInstanceNumber(string pcIdentifier)
+        /// <returns>インスタンス番号</returns>
+        private int GetNextAvailableInstanceNumber()
         {
             try
             {
                 var currentProcessName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
-                var runningProcesses = System.Diagnostics.Process.GetProcessesByName(currentProcessName);
-
-                Console.WriteLine($"Running {currentProcessName} processes: {runningProcesses.Length}");
-
-                var pcBaseDirectory = Path.Combine(
+                var baseDirectory = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT",
-                    "BrowserData",
-                    $"PC_{pcIdentifier}"
+                    "fastBOT", "Instance"
                 );
+
+                // ベースディレクトリを作成
+                Directory.CreateDirectory(baseDirectory);
 
                 var usedNumbers = new HashSet<int>();
 
-                if (Directory.Exists(pcBaseDirectory))
+                // 既存のインスタンスディレクトリをチェック
+                if (Directory.Exists(baseDirectory))
                 {
-                    var instanceDirectories = Directory.GetDirectories(pcBaseDirectory, "Instance_*");
+                    var instanceDirectories = Directory.GetDirectories(baseDirectory)
+                        .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
+                        .ToList();
 
                     foreach (var dir in instanceDirectories)
                     {
                         var dirName = Path.GetFileName(dir);
-                        if (dirName.StartsWith("Instance_") && dirName.Length > 9)
+                        if (int.TryParse(dirName, out var number))
                         {
-                            var numberPart = dirName.Substring(9);
-                            if (int.TryParse(numberPart, out var number))
+                            var lockFile = Path.Combine(dir, "instance.lock");
+                            if (File.Exists(lockFile))
                             {
-                                var lockFile = Path.Combine(dir, "instance.lock");
-                                if (File.Exists(lockFile))
+                                try
                                 {
-                                    try
+                                    var lockContent = File.ReadAllText(lockFile);
+                                    if (int.TryParse(lockContent, out var lockedProcessId))
                                     {
-                                        var lockContent = File.ReadAllText(lockFile);
-                                        if (int.TryParse(lockContent, out var lockedProcessId))
+                                        try
                                         {
-                                            try
+                                            // プロセスが実際に動いているかチェック
+                                            var process = System.Diagnostics.Process.GetProcessById(lockedProcessId);
+                                            if (process.ProcessName == currentProcessName && !process.HasExited)
                                             {
-                                                var process = System.Diagnostics.Process.GetProcessById(lockedProcessId);
-                                                if (process.ProcessName == currentProcessName)
-                                                {
-                                                    usedNumbers.Add(number);
-                                                    Console.WriteLine($"Instance {number} is locked by process {lockedProcessId}");
-                                                }
-                                                else
-                                                {
-                                                    File.Delete(lockFile);
-                                                    Console.WriteLine($"Removed stale lock file for instance {number}");
-                                                }
+                                                usedNumbers.Add(number);
+                                                Console.WriteLine($"Instance {number} is locked by active process {lockedProcessId}");
                                             }
-                                            catch (ArgumentException)
+                                            else
                                             {
+                                                // 異なるプロセス名または終了したプロセスの場合、ロックファイルを削除
                                                 File.Delete(lockFile);
-                                                Console.WriteLine($"Removed orphaned lock file for instance {number}");
+                                                Console.WriteLine($"Removed stale lock file for instance {number}");
                                             }
                                         }
+                                        catch (ArgumentException)
+                                        {
+                                            // プロセスが存在しない場合、ロックファイルを削除
+                                            File.Delete(lockFile);
+                                            Console.WriteLine($"Removed orphaned lock file for instance {number}");
+                                        }
                                     }
-                                    catch (Exception ex)
+                                    else
                                     {
-                                        Console.WriteLine($"Failed to check lock file for instance {number}: {ex.Message}");
+                                        // 無効なロックファイルを削除
+                                        File.Delete(lockFile);
+                                        Console.WriteLine($"Removed invalid lock file for instance {number}");
                                     }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to check lock file for instance {number}: {ex.Message}");
                                 }
                             }
                         }
                     }
                 }
 
+                // 1から順番に空いている番号を探す
                 for (int i = 1; i <= 99; i++)
                 {
                     if (!usedNumbers.Contains(i))
                     {
-                        CreateInstanceLockFile(pcIdentifier, i);
+                        Console.WriteLine($"Selected instance number: {i}");
                         return i;
                     }
                 }
 
-                return runningProcesses.Length;
+                // 99個まで埋まっている場合は適当な番号を返す
+                return new Random().Next(100, 999);
             }
             catch (Exception ex)
             {
@@ -239,16 +223,14 @@ namespace CefSharp.fastBOT
         /// <summary>
         /// インスタンスロックファイルを作成
         /// </summary>
-        private void CreateInstanceLockFile(string pcIdentifier, int instanceNumber)
+        /// <param name="instanceNumber">インスタンス番号</param>
+        private void CreateInstanceLockFile(int instanceNumber)
         {
             try
             {
                 var instanceDirectory = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT",
-                    "BrowserData",
-                    $"PC_{pcIdentifier}",
-                    $"Instance_{instanceNumber:D2}"
+                    "fastBOT", "Instance", instanceNumber.ToString()
                 );
 
                 Directory.CreateDirectory(instanceDirectory);
@@ -259,6 +241,7 @@ namespace CefSharp.fastBOT
                 File.WriteAllText(lockFile, currentProcessId.ToString());
                 Console.WriteLine($"Created lock file for instance {instanceNumber}: {lockFile}");
 
+                // アプリケーション終了時にロックファイルを削除
                 AppDomain.CurrentDomain.ProcessExit += (sender, e) => CleanupInstanceLockFile(lockFile);
                 Application.Current.Exit += (sender, e) => CleanupInstanceLockFile(lockFile);
             }
@@ -271,6 +254,7 @@ namespace CefSharp.fastBOT
         /// <summary>
         /// インスタンスロックファイルをクリーンアップ
         /// </summary>
+        /// <param name="lockFilePath">ロックファイルパス</param>
         private void CleanupInstanceLockFile(string lockFilePath)
         {
             try
@@ -287,9 +271,6 @@ namespace CefSharp.fastBOT
             }
         }
 
-        /// <summary>
-        /// アプリケーション終了時の処理
-        /// </summary>
         protected override void OnExit(ExitEventArgs e)
         {
             try
@@ -306,92 +287,6 @@ namespace CefSharp.fastBOT
             }
 
             base.OnExit(e);
-        }
-
-        /// <summary>
-        /// PC固有の識別子を生成
-        /// </summary>
-        private string GeneratePCIdentifier()
-        {
-            try
-            {
-                var identifierParts = new System.Collections.Generic.List<string>();
-
-                identifierParts.Add(Environment.MachineName);
-
-                try
-                {
-                    using (var searcher = new ManagementObjectSearcher("SELECT ProcessorId FROM Win32_Processor"))
-                    {
-                        foreach (ManagementObject obj in searcher.Get())
-                        {
-                            var processorId = obj["ProcessorId"]?.ToString();
-                            if (!string.IsNullOrEmpty(processorId))
-                            {
-                                identifierParts.Add(processorId);
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"プロセッサID取得エラー: {ex.Message}");
-                }
-
-                try
-                {
-                    using (var searcher = new ManagementObjectSearcher("SELECT SerialNumber FROM Win32_BaseBoard"))
-                    {
-                        foreach (ManagementObject obj in searcher.Get())
-                        {
-                            var serialNumber = obj["SerialNumber"]?.ToString();
-                            if (!string.IsNullOrEmpty(serialNumber) && serialNumber != "To be filled by O.E.M.")
-                            {
-                                identifierParts.Add(serialNumber);
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"マザーボードシリアル番号取得エラー: {ex.Message}");
-                }
-
-                identifierParts.Add(Environment.UserName);
-
-                var combinedString = string.Join("-", identifierParts);
-                Console.WriteLine($"PC識別情報: {combinedString}");
-
-                using (var sha256 = SHA256.Create())
-                {
-                    var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(combinedString));
-                    var hashString = Convert.ToBase64String(hashBytes)
-                        .Replace("/", "_")
-                        .Replace("+", "-")
-                        .Replace("=", "")
-                        .Substring(0, 16);
-
-                    return hashString;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"PC識別子生成エラー: {ex.Message}");
-                var fallbackString = $"{Environment.MachineName}-{Environment.UserName}";
-                Console.WriteLine($"フォールバック識別情報: {fallbackString}");
-
-                using (var sha256 = SHA256.Create())
-                {
-                    var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(fallbackString));
-                    return Convert.ToBase64String(hashBytes)
-                        .Replace("/", "_")
-                        .Replace("+", "-")
-                        .Replace("=", "")
-                        .Substring(0, 16);
-                }
-            }
         }
     }
 }

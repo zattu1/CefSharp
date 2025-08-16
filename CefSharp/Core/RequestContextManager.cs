@@ -1,189 +1,85 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Management;
-using System.Security.Cryptography;
-using System.Text;
+using System.Linq;
 using CefSharp;
 
 namespace CefSharp.fastBOT.Core
 {
     /// <summary>
     /// リクエストコンテキスト管理クラス
-    /// PC固有のフォルダにキャッシュとクッキーを格納
+    /// インスタンス番号ベースのキャッシュ管理（1, 2, 3...の順番でプロセス毎に分離）
     /// </summary>
     public class RequestContextManager : IDisposable
     {
         private readonly Dictionary<string, IRequestContext> _contexts;
-        private readonly string _baseCacheDirectory;
-        private readonly string _pcIdentifier;
+        private readonly int _instanceNumber;
+        private readonly string _baseCachePath;
         private bool _disposed = false;
 
         public RequestContextManager()
         {
             _contexts = new Dictionary<string, IRequestContext>();
-            _pcIdentifier = GeneratePCIdentifier();
 
-            // インスタンス番号を取得（App.xaml.csで既に決定済みのものを再利用）
-            var instanceNumber = GetCurrentInstanceNumber(_pcIdentifier);
+            // 現在のインスタンス番号を取得
+            _instanceNumber = GetCurrentInstanceNumber();
 
-            _baseCacheDirectory = Path.Combine(
+            // ベースキャッシュパスを設定
+            _baseCachePath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "fastBOT",
-                "BrowserData",
-                $"PC_{_pcIdentifier}",
-                $"Instance_{instanceNumber:D2}"
+                "fastBOT", "Instance", _instanceNumber.ToString()
             );
 
-            // ベースディレクトリを作成
-            Directory.CreateDirectory(_baseCacheDirectory);
-
-            Console.WriteLine($"RequestContextManager initialized with PC identifier: {_pcIdentifier}");
-            Console.WriteLine($"RequestContextManager instance number: {instanceNumber}");
-            Console.WriteLine($"Base cache directory: {_baseCacheDirectory}");
+            Console.WriteLine($"RequestContextManager initialized for instance {_instanceNumber}");
+            Console.WriteLine($"Base cache path: {_baseCachePath}");
         }
 
         /// <summary>
-        /// PC固有の識別子を生成
+        /// 現在のインスタンス番号を取得
         /// </summary>
-        /// <returns>PC識別子</returns>
-        private string GeneratePCIdentifier()
-        {
-            try
-            {
-                var identifierParts = new List<string>();
-
-                // マシン名を追加
-                identifierParts.Add(Environment.MachineName);
-
-                // プロセッサIDを取得（可能な場合）
-                try
-                {
-                    using (var searcher = new ManagementObjectSearcher("SELECT ProcessorId FROM Win32_Processor"))
-                    {
-                        foreach (ManagementObject obj in searcher.Get())
-                        {
-                            var processorId = obj["ProcessorId"]?.ToString();
-                            if (!string.IsNullOrEmpty(processorId))
-                            {
-                                identifierParts.Add(processorId);
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    // プロセッサIDが取得できない場合はスキップ
-                }
-
-                // マザーボードシリアル番号を取得（可能な場合）
-                try
-                {
-                    using (var searcher = new ManagementObjectSearcher("SELECT SerialNumber FROM Win32_BaseBoard"))
-                    {
-                        foreach (ManagementObject obj in searcher.Get())
-                        {
-                            var serialNumber = obj["SerialNumber"]?.ToString();
-                            if (!string.IsNullOrEmpty(serialNumber) && serialNumber != "To be filled by O.E.M.")
-                            {
-                                identifierParts.Add(serialNumber);
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    // シリアル番号が取得できない場合はスキップ
-                }
-
-                // ユーザー名を追加
-                identifierParts.Add(Environment.UserName);
-
-                // すべての情報を結合してハッシュ化
-                var combinedString = string.Join("-", identifierParts);
-                using (var sha256 = SHA256.Create())
-                {
-                    var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(combinedString));
-                    var hashString = Convert.ToBase64String(hashBytes)
-                        .Replace("/", "_")
-                        .Replace("+", "-")
-                        .Replace("=", "")
-                        .Substring(0, 16); // 16文字に短縮
-
-                    Console.WriteLine($"PC identifier generated from: {combinedString}");
-                    return hashString;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to generate PC identifier: {ex.Message}");
-                // フォールバック：マシン名とユーザー名のみ使用
-                var fallbackString = $"{Environment.MachineName}-{Environment.UserName}";
-                using (var sha256 = SHA256.Create())
-                {
-                    var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(fallbackString));
-                    return Convert.ToBase64String(hashBytes)
-                        .Replace("/", "_")
-                        .Replace("+", "-")
-                        .Replace("=", "")
-                        .Substring(0, 16);
-                }
-            }
-        }
-
-        /// <summary>
-        /// 現在のインスタンス番号を取得（既存のロックファイルから判定）
-        /// </summary>
-        /// <param name="pcIdentifier">PC識別子</param>
         /// <returns>インスタンス番号</returns>
-        private int GetCurrentInstanceNumber(string pcIdentifier)
+        private int GetCurrentInstanceNumber()
         {
             try
             {
                 var currentProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
-                var pcBaseDirectory = Path.Combine(
+                var baseDirectory = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT",
-                    "BrowserData",
-                    $"PC_{pcIdentifier}"
+                    "fastBOT", "Instance"
                 );
 
-                if (Directory.Exists(pcBaseDirectory))
+                if (Directory.Exists(baseDirectory))
                 {
-                    var instanceDirectories = Directory.GetDirectories(pcBaseDirectory, "Instance_*");
+                    var instanceDirectories = Directory.GetDirectories(baseDirectory)
+                        .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
+                        .ToList();
 
                     foreach (var dir in instanceDirectories)
                     {
-                        var lockFile = Path.Combine(dir, "instance.lock");
-                        if (File.Exists(lockFile))
+                        var dirName = Path.GetFileName(dir);
+                        if (int.TryParse(dirName, out var number))
                         {
-                            try
+                            var lockFile = Path.Combine(dir, "instance.lock");
+                            if (File.Exists(lockFile))
                             {
-                                var lockContent = File.ReadAllText(lockFile);
-                                if (int.TryParse(lockContent, out var lockedProcessId) && lockedProcessId == currentProcessId)
+                                try
                                 {
-                                    var dirName = Path.GetFileName(dir);
-                                    if (dirName.StartsWith("Instance_") && dirName.Length > 9)
+                                    var lockContent = File.ReadAllText(lockFile);
+                                    if (int.TryParse(lockContent, out var lockedProcessId) && lockedProcessId == currentProcessId)
                                     {
-                                        var numberPart = dirName.Substring(9);
-                                        if (int.TryParse(numberPart, out var number))
-                                        {
-                                            return number;
-                                        }
+                                        return number;
                                     }
                                 }
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"Failed to read lock file {lockFile}: {ex.Message}");
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to read lock file {lockFile}: {ex.Message}");
+                                }
                             }
                         }
                     }
                 }
 
-                // ロックファイルが見つからない場合は1を返す（新規起動）
+                // ロックファイルが見つからない場合は1を返す
                 return 1;
             }
             catch (Exception ex)
@@ -208,32 +104,21 @@ namespace CefSharp.fastBOT.Core
                     return _contexts[name];
                 }
 
-                // グローバルキャッシュディレクトリ内にコンテキスト固有のサブディレクトリを作成
-                var contextCachePath = Path.Combine(_baseCacheDirectory, "Contexts", name);
+                // インスタンス番号配下のコンテキスト固有ディレクトリを作成
+                var contextCachePath = Path.Combine(_baseCachePath, "Contexts", name);
                 Directory.CreateDirectory(contextCachePath);
 
-                // 最小限の設定でRequestContextを作成
-                RequestContextSettings settings = null;
-
-                try
+                var settings = new RequestContextSettings()
                 {
-                    settings = new RequestContextSettings()
-                    {
-                        AcceptLanguageList = "ja-JP,ja,en-US,en",
-                        PersistSessionCookies = true
-                    };
-                }
-                catch (Exception settingsEx)
-                {
-                    Console.WriteLine($"RequestContextSettings creation failed, using minimal settings: {settingsEx.Message}");
-                    settings = new RequestContextSettings();
-                }
+                    CachePath = contextCachePath,
+                    AcceptLanguageList = "ja-JP,ja,en-US,en"
+                };
 
                 var context = new RequestContext(settings);
                 _contexts[name] = context;
 
                 Console.WriteLine($"RequestContext created: {name}");
-                Console.WriteLine($"Context directory prepared: {contextCachePath}");
+                Console.WriteLine($"Context cache path: {contextCachePath}");
                 return context;
             }
             catch (Exception ex)
@@ -298,35 +183,35 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// PC識別子を取得
+        /// 現在のインスタンス番号を取得
         /// </summary>
-        /// <returns>PC識別子</returns>
-        public string GetPCIdentifier()
+        /// <returns>インスタンス番号</returns>
+        public int GetInstanceNumber()
         {
-            return _pcIdentifier;
+            return _instanceNumber;
         }
 
         /// <summary>
-        /// ベースキャッシュディレクトリを取得
+        /// ベースキャッシュパスを取得
         /// </summary>
-        /// <returns>ベースキャッシュディレクトリパス</returns>
-        public string GetBaseCacheDirectory()
+        /// <returns>ベースキャッシュパス</returns>
+        public string GetBaseCachePath()
         {
-            return _baseCacheDirectory;
+            return _baseCachePath;
         }
 
         /// <summary>
-        /// キャッシュディレクトリのサイズを計算
+        /// キャッシュサイズを計算
         /// </summary>
         /// <returns>キャッシュサイズ（バイト）</returns>
         public long GetCacheSize()
         {
             try
             {
-                if (!Directory.Exists(_baseCacheDirectory))
+                if (!Directory.Exists(_baseCachePath))
                     return 0;
 
-                var directoryInfo = new DirectoryInfo(_baseCacheDirectory);
+                var directoryInfo = new DirectoryInfo(_baseCachePath);
                 return GetDirectorySize(directoryInfo);
             }
             catch (Exception ex)
@@ -379,7 +264,7 @@ namespace CefSharp.fastBOT.Core
                 if (!string.IsNullOrEmpty(contextName))
                 {
                     // 特定のコンテキストのキャッシュをクリア
-                    var contextPath = Path.Combine(_baseCacheDirectory, "Contexts", contextName);
+                    var contextPath = Path.Combine(_baseCachePath, "Contexts", contextName);
                     if (Directory.Exists(contextPath))
                     {
                         Directory.Delete(contextPath, true);
@@ -390,12 +275,30 @@ namespace CefSharp.fastBOT.Core
                 }
                 else
                 {
-                    // 全体のキャッシュをクリア
-                    if (Directory.Exists(_baseCacheDirectory))
+                    // 全体のキャッシュをクリア（ロックファイルは保持）
+                    if (Directory.Exists(_baseCachePath))
                     {
-                        Directory.Delete(_baseCacheDirectory, true);
-                        Directory.CreateDirectory(_baseCacheDirectory);
-                        Console.WriteLine("All cache cleared");
+                        var lockFile = Path.Combine(_baseCachePath, "instance.lock");
+                        var lockFileExists = File.Exists(lockFile);
+                        string lockContent = null;
+
+                        // ロックファイルのバックアップ
+                        if (lockFileExists)
+                        {
+                            lockContent = File.ReadAllText(lockFile);
+                        }
+
+                        // ディレクトリを削除して再作成
+                        Directory.Delete(_baseCachePath, true);
+                        Directory.CreateDirectory(_baseCachePath);
+
+                        // ロックファイルを復元
+                        if (lockFileExists && !string.IsNullOrEmpty(lockContent))
+                        {
+                            File.WriteAllText(lockFile, lockContent);
+                        }
+
+                        Console.WriteLine($"All cache cleared for instance {_instanceNumber}");
                         return true;
                     }
                 }
@@ -407,6 +310,168 @@ namespace CefSharp.fastBOT.Core
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 全インスタンスの情報を取得
+        /// </summary>
+        /// <returns>インスタンス情報のリスト</returns>
+        public static List<InstanceInfo> GetAllInstancesInfo()
+        {
+            var instances = new List<InstanceInfo>();
+
+            try
+            {
+                var baseDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "fastBOT", "Instance"
+                );
+
+                if (Directory.Exists(baseDirectory))
+                {
+                    var instanceDirectories = Directory.GetDirectories(baseDirectory)
+                        .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
+                        .OrderBy(dir => int.Parse(Path.GetFileName(dir)))
+                        .ToList();
+
+                    foreach (var dir in instanceDirectories)
+                    {
+                        var dirName = Path.GetFileName(dir);
+                        if (int.TryParse(dirName, out var number))
+                        {
+                            var instance = new InstanceInfo
+                            {
+                                InstanceNumber = number,
+                                CachePath = dir,
+                                IsActive = false,
+                                ProcessId = null,
+                                CacheSize = 0
+                            };
+
+                            // ロックファイルをチェック
+                            var lockFile = Path.Combine(dir, "instance.lock");
+                            if (File.Exists(lockFile))
+                            {
+                                try
+                                {
+                                    var lockContent = File.ReadAllText(lockFile);
+                                    if (int.TryParse(lockContent, out var processId))
+                                    {
+                                        try
+                                        {
+                                            var process = System.Diagnostics.Process.GetProcessById(processId);
+                                            if (!process.HasExited)
+                                            {
+                                                instance.IsActive = true;
+                                                instance.ProcessId = processId;
+                                            }
+                                        }
+                                        catch
+                                        {
+                                            // プロセスが存在しない場合
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to read lock file for instance {number}: {ex.Message}");
+                                }
+                            }
+
+                            // キャッシュサイズを計算
+                            try
+                            {
+                                var directoryInfo = new DirectoryInfo(dir);
+                                if (directoryInfo.Exists)
+                                {
+                                    instance.CacheSize = GetDirectorySizeStatic(directoryInfo);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Failed to calculate cache size for instance {number}: {ex.Message}");
+                            }
+
+                            instances.Add(instance);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetAllInstancesInfo error: {ex.Message}");
+            }
+
+            return instances;
+        }
+
+        /// <summary>
+        /// ディレクトリサイズを計算（静的メソッド）
+        /// </summary>
+        /// <param name="directoryInfo">ディレクトリ情報</param>
+        /// <returns>サイズ（バイト）</returns>
+        private static long GetDirectorySizeStatic(DirectoryInfo directoryInfo)
+        {
+            long size = 0;
+
+            try
+            {
+                foreach (var fileInfo in directoryInfo.GetFiles())
+                {
+                    size += fileInfo.Length;
+                }
+
+                foreach (var subDirectory in directoryInfo.GetDirectories())
+                {
+                    size += GetDirectorySizeStatic(subDirectory);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error calculating directory size for {directoryInfo.FullName}: {ex.Message}");
+            }
+
+            return size;
+        }
+
+        /// <summary>
+        /// 非アクティブなインスタンスのキャッシュをクリーンアップ
+        /// </summary>
+        /// <returns>クリーンアップされたインスタンス数</returns>
+        public static int CleanupInactiveInstances()
+        {
+            int cleanedCount = 0;
+
+            try
+            {
+                var instances = GetAllInstancesInfo();
+                var inactiveInstances = instances.Where(i => !i.IsActive).ToList();
+
+                foreach (var instance in inactiveInstances)
+                {
+                    try
+                    {
+                        if (Directory.Exists(instance.CachePath))
+                        {
+                            Directory.Delete(instance.CachePath, true);
+                            Console.WriteLine($"Cleaned up inactive instance {instance.InstanceNumber}");
+                            cleanedCount++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to cleanup instance {instance.InstanceNumber}: {ex.Message}");
+                    }
+                }
+
+                Console.WriteLine($"Cleanup completed: {cleanedCount} inactive instances removed");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"CleanupInactiveInstances error: {ex.Message}");
+            }
+
+            return cleanedCount;
         }
 
         /// <summary>
@@ -429,8 +494,65 @@ namespace CefSharp.fastBOT.Core
                 }
                 _contexts.Clear();
                 _disposed = true;
-                Console.WriteLine("RequestContextManager disposed");
+                Console.WriteLine($"RequestContextManager disposed for instance {_instanceNumber}");
             }
+        }
+    }
+
+    /// <summary>
+    /// インスタンス情報を表すクラス
+    /// </summary>
+    public class InstanceInfo
+    {
+        /// <summary>
+        /// インスタンス番号
+        /// </summary>
+        public int InstanceNumber { get; set; }
+
+        /// <summary>
+        /// キャッシュパス
+        /// </summary>
+        public string CachePath { get; set; }
+
+        /// <summary>
+        /// アクティブかどうか
+        /// </summary>
+        public bool IsActive { get; set; }
+
+        /// <summary>
+        /// プロセスID
+        /// </summary>
+        public int? ProcessId { get; set; }
+
+        /// <summary>
+        /// キャッシュサイズ（バイト）
+        /// </summary>
+        public long CacheSize { get; set; }
+
+        /// <summary>
+        /// キャッシュサイズを人間が読みやすい形式で取得
+        /// </summary>
+        /// <returns>フォーマットされたキャッシュサイズ</returns>
+        public string GetFormattedCacheSize()
+        {
+            if (CacheSize < 1024)
+                return $"{CacheSize} B";
+            else if (CacheSize < 1024 * 1024)
+                return $"{CacheSize / 1024.0:F1} KB";
+            else if (CacheSize < 1024 * 1024 * 1024)
+                return $"{CacheSize / (1024.0 * 1024.0):F1} MB";
+            else
+                return $"{CacheSize / (1024.0 * 1024.0 * 1024.0):F1} GB";
+        }
+
+        /// <summary>
+        /// インスタンス情報の文字列表現
+        /// </summary>
+        /// <returns>インスタンス情報の文字列</returns>
+        public override string ToString()
+        {
+            var status = IsActive ? $"Active (PID: {ProcessId})" : "Inactive";
+            return $"Instance {InstanceNumber}: {status}, Cache: {GetFormattedCacheSize()}";
         }
     }
 }

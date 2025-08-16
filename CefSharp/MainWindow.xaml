@@ -35,13 +35,13 @@
                 </Grid.ColumnDefinitions>
 
                 <Button x:Name="PrevButton" Grid.Column="0" Content="◀" Width="40" FontSize="18" 
-                        ToolTip="戻る" Margin="2"/>
+                        ToolTip="戻る" Margin="2" Click="PrevButton_Click"/>
                 <Button x:Name="NextButton" Grid.Column="1" Content="▶" Width="40" FontSize="18" 
-                        ToolTip="進む" Margin="2"/>
+                        ToolTip="進む" Margin="2" Click="NextButton_Click"/>
                 <Button x:Name="ReloadButton" Grid.Column="2" Content="⟳" Width="40" FontSize="18" 
-                        ToolTip="再読込" Margin="2"/>
+                        ToolTip="再読込" Margin="2" Click="ReloadButton_Click"/>
                 <Button x:Name="TopButton" Grid.Column="3" Content="■" Width="40" FontSize="18" 
-                        ToolTip="トップ画面へ" Margin="2"/>
+                        ToolTip="トップ画面へ" Margin="2" Click="TopButton_Click"/>
 
                 <!-- URL入力エリア -->
                 <Border Grid.Column="4" Background="White" CornerRadius="3" Margin="5,2" BorderBrush="Gray" BorderThickness="1">
@@ -62,13 +62,14 @@
                                  BorderThickness="0" 
                                  Background="Transparent"
                                  VerticalAlignment="Center"
-                                 Padding="0,3"/>
+                                 Padding="0,3"
+                                 KeyDown="UrlLineEdit_KeyDown"/>
                     </Grid>
                 </Border>
 
-                <Button x:Name="GoButton" Grid.Column="5" Content="移動" Margin="2"/>
+                <Button x:Name="GoButton" Grid.Column="5" Content="移動" Margin="2" Click="GoButton_Click"/>
                 <Button x:Name="NewTabButton" Grid.Column="6" Content="+" Width="30" FontSize="16" 
-                        ToolTip="新しいタブ (Ctrl+T)" Margin="5,2,2,2"/>
+                        ToolTip="新しいタブ (Ctrl+T)" Margin="5,2,2,2" Click="CreateNewTabButton_Click"/>
             </Grid>
 
             <!-- プログレスバー -->
@@ -80,31 +81,31 @@
                 <!-- タブは動的に追加 -->
                 <TabControl.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="新しいタブ(_N)" InputGestureText="Ctrl+T">
+                        <MenuItem Header="新しいタブ(_N)" InputGestureText="Ctrl+T" Click="NewTabMenuItem_Click">
                             <MenuItem.Icon>
                                 <TextBlock Text="+" FontWeight="Bold"/>
                             </MenuItem.Icon>
                         </MenuItem>
                         <Separator/>
-                        <MenuItem Header="タブを閉じる(_C)" InputGestureText="Ctrl+W">
+                        <MenuItem Header="タブを閉じる(_C)" InputGestureText="Ctrl+W" Click="CloseTabMenuItem_Click">
                             <MenuItem.Icon>
                                 <TextBlock Text="×" FontWeight="Bold"/>
                             </MenuItem.Icon>
                         </MenuItem>
-                        <MenuItem Header="他のタブを閉じる(_O)"/>
+                        <MenuItem Header="他のタブを閉じる(_O)" Click="CloseOtherTabsMenuItem_Click"/>
                         <Separator/>
-                        <MenuItem Header="タブを複製(_D)">
+                        <MenuItem Header="タブを複製(_D)" Click="DuplicateTabMenuItem_Click">
                             <MenuItem.Icon>
                                 <TextBlock Text="⧉" FontWeight="Bold"/>
                             </MenuItem.Icon>
                         </MenuItem>
-                        <MenuItem Header="新しいウィンドウで開く(_W)">
+                        <MenuItem Header="新しいウィンドウで開く(_W)" Click="NewWindowMenuItem_Click">
                             <MenuItem.Icon>
                                 <TextBlock Text="🗔" FontWeight="Bold"/>
                             </MenuItem.Icon>
                         </MenuItem>
                         <Separator/>
-                        <MenuItem Header="タブ復元(_R)" InputGestureText="Ctrl+Shift+T" IsEnabled="False">
+                        <MenuItem Header="タブ復元(_R)" InputGestureText="Ctrl+Shift+T" IsEnabled="False" Click="RestoreLastClosedTabMenuItem_Click">
                             <MenuItem.Icon>
                                 <TextBlock Text="↶" FontWeight="Bold"/>
                             </MenuItem.Icon>

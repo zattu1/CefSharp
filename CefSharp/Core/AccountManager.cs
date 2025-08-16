@@ -10,7 +10,8 @@ using CefSharp.fastBOT.Models;
 namespace CefSharp.fastBOT.Core
 {
     /// <summary>
-    /// アカウント情報を管理するサービスクラス（シンプル版）
+    /// アカウント情報を管理するサービスクラス（改良版）
+    /// 最大10個のアカウントを管理し、即座の切り替えをサポート
     /// </summary>
     public class AccountManager
     {
@@ -25,7 +26,8 @@ namespace CefSharp.fastBOT.Core
             _accountsFilePath = Path.Combine(appDataPath, "accounts.json");
             _accounts = new List<AccountInfo>();
 
-            LoadAccountsAsync().ConfigureAwait(false);
+            // 同期的にアカウントを初期化
+            InitializeAccountsSync();
         }
 
         /// <summary>
@@ -39,17 +41,22 @@ namespace CefSharp.fastBOT.Core
         public event EventHandler<AccountInfo> CurrentAccountChanged;
 
         /// <summary>
+        /// アカウントリストが更新された時のイベント
+        /// </summary>
+        public event EventHandler AccountListUpdated;
+
+        /// <summary>
         /// 現在選択されているアカウント
         /// </summary>
         public AccountInfo CurrentAccount { get; private set; }
 
         /// <summary>
-        /// 全てのアカウントを取得
+        /// 全てのアカウントを取得（1-10の番号順）
         /// </summary>
         /// <returns>アカウントのリスト</returns>
         public List<AccountInfo> GetAllAccounts()
         {
-            return _accounts.ToList();
+            return _accounts.OrderBy(a => a.AccountNumber).ToList();
         }
 
         /// <summary>
@@ -58,45 +65,30 @@ namespace CefSharp.fastBOT.Core
         /// <returns>有効なアカウントのリスト</returns>
         public List<AccountInfo> GetActiveAccounts()
         {
-            return _accounts.Where(a => a.IsActive).ToList();
+            return _accounts.Where(a => a.IsActive).OrderBy(a => a.AccountNumber).ToList();
         }
 
         /// <summary>
-        /// アカウントを追加
+        /// 指定した番号のアカウントを取得
         /// </summary>
-        /// <param name="account">追加するアカウント</param>
-        /// <returns>成功した場合true</returns>
-        public async Task<bool> AddAccountAsync(AccountInfo account)
+        /// <param name="accountNumber">アカウント番号（1-10）</param>
+        /// <returns>アカウント情報（存在しない場合は新規作成）</returns>
+        public AccountInfo GetAccountByNumber(int accountNumber)
         {
-            try
+            if (accountNumber < 1 || accountNumber > MAX_ACCOUNTS)
+                throw new ArgumentException($"アカウント番号は1から{MAX_ACCOUNTS}の間で指定してください");
+
+            var account = _accounts.FirstOrDefault(a => a.AccountNumber == accountNumber);
+            if (account == null)
             {
-                if (_accounts.Count >= MAX_ACCOUNTS)
-                {
-                    throw new InvalidOperationException($"アカウントは最大{MAX_ACCOUNTS}個まで登録できます");
-                }
-
-                if (string.IsNullOrWhiteSpace(account.AccountName))
-                {
-                    throw new ArgumentException("アカウント名が必要です");
-                }
-
-                if (_accounts.Any(a => a.AccountName.Equals(account.AccountName, StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new ArgumentException("同じ名前のアカウントが既に存在します");
-                }
-
+                // アカウントが存在しない場合は新規作成
+                account = CreateNewAccount(accountNumber);
                 _accounts.Add(account);
-                await SaveAccountsAsync();
+                SaveAccountsAsync().ConfigureAwait(false);
+                AccountListUpdated?.Invoke(this, EventArgs.Empty);
+            }
 
-                AccountChanged?.Invoke(this, account);
-                Console.WriteLine($"Account added: {account.AccountName}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"AddAccountAsync error: {ex.Message}");
-                return false;
-            }
+            return account;
         }
 
         /// <summary>
@@ -108,19 +100,21 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var existingAccount = _accounts.FirstOrDefault(a => a.AccountName == account.AccountName);
-                if (existingAccount == null)
+                var existingAccount = _accounts.FirstOrDefault(a => a.AccountNumber == account.AccountNumber);
+                if (existingAccount != null)
                 {
-                    throw new ArgumentException("指定されたアカウントが見つかりません");
+                    var index = _accounts.IndexOf(existingAccount);
+                    _accounts[index] = account;
+                }
+                else
+                {
+                    _accounts.Add(account);
                 }
 
-                var index = _accounts.IndexOf(existingAccount);
-                _accounts[index] = account;
-
                 await SaveAccountsAsync();
-
                 AccountChanged?.Invoke(this, account);
-                Console.WriteLine($"Account updated: {account.AccountName}");
+                AccountListUpdated?.Invoke(this, EventArgs.Empty);
+                Console.WriteLine($"Account updated: アカウント{account.AccountNumber}");
                 return true;
             }
             catch (Exception ex)
@@ -131,82 +125,51 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// アカウントを削除（IDによる削除）
+        /// アカウントを削除（データをクリア）
         /// </summary>
-        /// <param name="accountId">削除するアカウントID</param>
+        /// <param name="accountNumber">削除するアカウント番号</param>
         /// <returns>成功した場合true</returns>
-        public async Task<bool> DeleteAccountAsync(string accountId)
+        public async Task<bool> ClearAccountAsync(int accountNumber)
         {
             try
             {
-                var account = _accounts.FirstOrDefault(a => a.Id == accountId);
-                if (account == null)
+                var account = _accounts.FirstOrDefault(a => a.AccountNumber == accountNumber);
+                if (account != null)
                 {
-                    return false;
+                    // データをクリアして無効化
+                    account.ClearAllData();
+                    account.IsActive = false;
+
+                    await SaveAccountsAsync();
+
+                    // 削除されたアカウントが現在選択されている場合はクリア
+                    if (CurrentAccount?.AccountNumber == accountNumber)
+                    {
+                        CurrentAccount = null;
+                        CurrentAccountChanged?.Invoke(this, null);
+                    }
+
+                    AccountChanged?.Invoke(this, account);
+                    AccountListUpdated?.Invoke(this, EventArgs.Empty);
+                    Console.WriteLine($"Account cleared: アカウント{accountNumber}");
                 }
-
-                _accounts.Remove(account);
-                await SaveAccountsAsync();
-
-                // 削除されたアカウントが現在選択されている場合はクリア
-                if (CurrentAccount == account)
-                {
-                    CurrentAccount = null;
-                    CurrentAccountChanged?.Invoke(this, null);
-                }
-
-                Console.WriteLine($"Account deleted: {account.AccountName}");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"DeleteAccountAsync error: {ex.Message}");
+                Console.WriteLine($"ClearAccountAsync error: {ex.Message}");
                 return false;
             }
         }
 
         /// <summary>
-        /// アカウント名でアカウントを削除
+        /// 現在のアカウントを設定（番号で指定）
         /// </summary>
-        /// <param name="accountName">削除するアカウント名</param>
-        /// <returns>成功した場合true</returns>
-        public async Task<bool> DeleteAccountByNameAsync(string accountName)
+        /// <param name="accountNumber">アカウント番号</param>
+        public void SetCurrentAccountByNumber(int accountNumber)
         {
-            try
-            {
-                var account = _accounts.FirstOrDefault(a => a.AccountName == accountName);
-                if (account == null)
-                {
-                    return false;
-                }
-
-                return await DeleteAccountAsync(account.Id);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"DeleteAccountByNameAsync error: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// アカウントを取得
-        /// </summary>
-        /// <param name="accountName">アカウント名</param>
-        /// <returns>アカウント情報（見つからない場合はnull）</returns>
-        public AccountInfo GetAccount(string accountName)
-        {
-            return _accounts.FirstOrDefault(a => a.AccountName == accountName);
-        }
-
-        /// <summary>
-        /// IDでアカウントを取得
-        /// </summary>
-        /// <param name="accountId">アカウントID</param>
-        /// <returns>アカウント情報（見つからない場合はnull）</returns>
-        public AccountInfo GetAccountById(string accountId)
-        {
-            return _accounts.FirstOrDefault(a => a.Id == accountId);
+            var account = GetAccountByNumber(accountNumber);
+            SetCurrentAccount(account);
         }
 
         /// <summary>
@@ -220,45 +183,45 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 現在のアカウントを名前で設定
-        /// </summary>
-        /// <param name="accountName">アカウント名</param>
-        public void SetCurrentAccountByName(string accountName)
-        {
-            var account = GetAccount(accountName);
-            SetCurrentAccount(account);
-        }
-
-        /// <summary>
-        /// 現在のアカウントをIDで設定
-        /// </summary>
-        /// <param name="accountId">アカウントID</param>
-        public void SetCurrentAccountById(string accountId)
-        {
-            var account = GetAccountById(accountId);
-            SetCurrentAccount(account);
-        }
-
-        /// <summary>
         /// 新しい空のアカウントを作成
         /// </summary>
-        /// <param name="accountName">アカウント名</param>
+        /// <param name="accountNumber">アカウント番号</param>
         /// <returns>新しいアカウント情報</returns>
-        public AccountInfo CreateNewAccount(string accountName = null)
+        public AccountInfo CreateNewAccount(int accountNumber)
         {
-            if (string.IsNullOrEmpty(accountName))
-            {
-                accountName = GenerateDefaultAccountName();
-            }
+            if (accountNumber < 1 || accountNumber > MAX_ACCOUNTS)
+                throw new ArgumentException($"アカウント番号は1から{MAX_ACCOUNTS}の間で指定してください");
 
             return new AccountInfo
             {
                 Id = Guid.NewGuid().ToString(),
-                AccountName = accountName,
+                AccountNumber = accountNumber,
+                AccountName = $"アカウント{accountNumber}",
                 ProxyHost = "127.0.0.1",
                 ProxyPort = 8080,
-                RotationIntervalSeconds = 30
+                RotationIntervalSeconds = 30,
+                IsActive = true,
+                CreatedAt = DateTime.Now,
+                UpdatedAt = DateTime.Now
             };
+        }
+
+        /// <summary>
+        /// 全てのアカウントスロットを初期化（1-10）
+        /// </summary>
+        public async Task InitializeAllAccountSlots()
+        {
+            for (int i = 1; i <= MAX_ACCOUNTS; i++)
+            {
+                if (!_accounts.Any(a => a.AccountNumber == i))
+                {
+                    var newAccount = CreateNewAccount(i);
+                    newAccount.IsActive = false; // 空のスロットは無効化
+                    _accounts.Add(newAccount);
+                }
+            }
+            await SaveAccountsAsync();
+            AccountListUpdated?.Invoke(this, EventArgs.Empty);
         }
 
         /// <summary>
@@ -284,56 +247,53 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// アカウント情報をファイルから読み込み
+        /// アカウント情報をファイルから読み込み（同期版）
         /// </summary>
-        private async Task LoadAccountsAsync()
+        private void InitializeAccountsSync()
         {
             try
             {
-                if (!File.Exists(_accountsFilePath))
+                if (File.Exists(_accountsFilePath))
                 {
-                    // デフォルトアカウントを作成
-                    var defaultAccount = CreateNewAccount("デフォルト");
-                    await AddAccountAsync(defaultAccount);
-                    return;
+                    var json = File.ReadAllText(_accountsFilePath, Encoding.UTF8);
+                    var accounts = JsonSerializer.Deserialize<List<AccountInfo>>(json);
+
+                    _accounts.Clear();
+                    if (accounts != null)
+                    {
+                        _accounts.AddRange(accounts);
+                    }
                 }
 
-                var json = await File.ReadAllTextAsync(_accountsFilePath, Encoding.UTF8);
-                var accounts = JsonSerializer.Deserialize<List<AccountInfo>>(json);
-
-                _accounts.Clear();
-                if (accounts != null)
+                // 不足しているアカウントスロットを補完
+                for (int i = 1; i <= MAX_ACCOUNTS; i++)
                 {
-                    _accounts.AddRange(accounts);
+                    if (!_accounts.Any(a => a.AccountNumber == i))
+                    {
+                        var newAccount = CreateNewAccount(i);
+                        newAccount.IsActive = false; // 空のスロットは無効化
+                        _accounts.Add(newAccount);
+                    }
                 }
 
-                Console.WriteLine($"Loaded {_accounts.Count} accounts");
+                Console.WriteLine($"Loaded {_accounts.Count} account slots (1-{MAX_ACCOUNTS})");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"LoadAccountsAsync error: {ex.Message}");
+                Console.WriteLine($"InitializeAccountsSync error: {ex.Message}");
 
-                // エラーの場合はデフォルトアカウントを作成
-                var defaultAccount = CreateNewAccount("デフォルト");
-                await AddAccountAsync(defaultAccount);
-            }
-        }
-
-        /// <summary>
-        /// デフォルトアカウント名を生成
-        /// </summary>
-        /// <returns>デフォルトアカウント名</returns>
-        private string GenerateDefaultAccountName()
-        {
-            for (int i = 1; i <= MAX_ACCOUNTS; i++)
-            {
-                var name = $"アカウント{i}";
-                if (!_accounts.Any(a => a.AccountName == name))
+                // エラーの場合は全スロットを新規作成
+                _accounts.Clear();
+                for (int i = 1; i <= MAX_ACCOUNTS; i++)
                 {
-                    return name;
+                    var newAccount = CreateNewAccount(i);
+                    newAccount.IsActive = false;
+                    _accounts.Add(newAccount);
                 }
             }
-            return $"アカウント{DateTime.Now.Ticks}";
+
+            // 初期化完了を非同期で保存
+            Task.Run(async () => await SaveAccountsAsync());
         }
 
         /// <summary>
@@ -345,6 +305,37 @@ namespace CefSharp.fastBOT.Core
         /// 最大アカウント数を取得
         /// </summary>
         public int MaxAccounts => MAX_ACCOUNTS;
+
+        /// <summary>
+        /// 使用可能なアカウント番号のリストを取得
+        /// </summary>
+        /// <returns>1から10までの番号リスト</returns>
+        public List<int> GetAvailableAccountNumbers()
+        {
+            return Enumerable.Range(1, MAX_ACCOUNTS).ToList();
+        }
+
+        /// <summary>
+        /// アカウントの表示名リストを取得（コンボボックス用）
+        /// </summary>
+        /// <returns>表示名のリスト</returns>
+        public List<string> GetAccountDisplayNames()
+        {
+            var displayNames = new List<string>();
+            for (int i = 1; i <= MAX_ACCOUNTS; i++)
+            {
+                var account = _accounts.FirstOrDefault(a => a.AccountNumber == i);
+                if (account != null && account.IsActive && !string.IsNullOrEmpty(account.LoginId))
+                {
+                    displayNames.Add($"アカウント{i} - {account.LoginId}");
+                }
+                else
+                {
+                    displayNames.Add($"アカウント{i} - 未設定");
+                }
+            }
+            return displayNames;
+        }
 
         /// <summary>
         /// リソースをクリーンアップ

@@ -8,40 +8,26 @@
             <!-- 購入進捗バー -->
             <ProgressBar x:Name="ProgressBar" Maximum="11" Value="0" Height="20" Margin="0,0,0,5"/>
 
-            <!-- ページ解析・監視 -->
-            <GroupBox Header="ページ解析・監視" Margin="0,5">
-                <StackPanel>
-                    <Button x:Name="GetPageHtmlButton" Content="ページ解析" 
-                            Margin="0,2" ToolTip="ページ全体を解析してチケット情報を取得"/>
-                    <Button x:Name="GetBodyHtmlButton" Content="コンテンツ解析" 
-                            Margin="0,2" ToolTip="メインコンテンツを解析"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,5">
-                        <Label Content="監視対象:"/>
-                        <TextBox x:Name="SelectorTextBox" Width="120" 
-                                 Text=".ticket-area" Margin="2,0" 
-                                 ToolTip="監視する要素のCSSセレクター"/>
-                    </StackPanel>
-                    <Button x:Name="GetElementHtmlButton" Content="要素監視" 
-                            Margin="0,2" ToolTip="指定した要素を監視"/>
-                    <Button x:Name="GetPageTextButton" Content="テキスト抽出" 
-                            Margin="0,2" ToolTip="ページからテキストを抽出"/>
-                    <CheckBox x:Name="AutoSaveCheckBox" Content="ログ自動保存" 
-                              Margin="0,5" ToolTip="解析結果を自動的にファイルに保存"/>
-                </StackPanel>
-            </GroupBox>
-
             <!-- アカウント管理 -->
-            <GroupBox Header="アカウント管理" Margin="0,5">
+            <GroupBox Header="アカウント管理 (1-10スロット)" Margin="0,5">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,2">
-                        <Label Content="アカウント:" Width="60"/>
-                        <ComboBox x:Name="AccountComboBox" Width="130" Margin="2,0"/>
+                        <Label Content="選択:" Width="50"/>
+                        <ComboBox x:Name="AccountComboBox" Width="200" Margin="2,0"/>
+                        <TextBlock Text="※選択で即座に切り替わります" 
+                                   VerticalAlignment="Center" Margin="10,0" 
+                                   Foreground="Gray" FontSize="10"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,2">
-                        <Button x:Name="SaveAccountButton" Content="保存" Width="40" Margin="2,0"/>
-                        <Button x:Name="NewAccountButton" Content="新規" Width="40" Margin="2,0"/>
-                        <Button x:Name="DeleteAccountButton" Content="削除" Width="40" Margin="2,0"/>
+                        <Button x:Name="SaveAccountButton" Content="保存" Width="50" Margin="2,0" 
+                                Background="LightGreen" ToolTip="現在の入力内容をアカウントに保存"/>
+                        <Button x:Name="NewAccountButton" Content="クリア" Width="50" Margin="2,0" 
+                                Background="LightYellow" ToolTip="フォームをクリア"/>
+                        <Button x:Name="DeleteAccountButton" Content="削除" Width="50" Margin="2,0" 
+                                Background="LightCoral" ToolTip="アカウントデータを削除"/>
                     </StackPanel>
+                    <TextBlock Text="※ログイン情報、ネットワーク設定、購入者情報、クレジットカード情報が一括管理されます" 
+                               Margin="0,5" Foreground="Blue" FontSize="10" TextWrapping="Wrap"/>
                 </StackPanel>
             </GroupBox>
 
@@ -121,14 +107,14 @@
 
                     <Label Grid.Row="0" Grid.Column="0" Content="姓名:"/>
                     <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
-                        <TextBox x:Name="LastNameLineEdit" Width="70"/>
-                        <TextBox x:Name="FirstNameLineEdit" Width="70" Margin="5,0,0,0"/>
+                        <TextBox x:Name="LastNameLineEdit" Width="80" ToolTip="姓"/>
+                        <TextBox x:Name="FirstNameLineEdit" Width="80" Margin="5,0,0,0" ToolTip="名"/>
                     </StackPanel>
 
                     <Label Grid.Row="1" Grid.Column="0" Content="カナ:"/>
                     <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
-                        <TextBox x:Name="LastKanaLineEdit" Width="70"/>
-                        <TextBox x:Name="FirstKanaLineEdit" Width="70" Margin="5,0,0,0"/>
+                        <TextBox x:Name="LastKanaLineEdit" Width="80" ToolTip="セイ"/>
+                        <TextBox x:Name="FirstKanaLineEdit" Width="80" Margin="5,0,0,0" ToolTip="メイ"/>
                     </StackPanel>
 
                     <Label Grid.Row="2" Grid.Column="0" Content="TEL:"/>
@@ -160,7 +146,7 @@
 
                     <Label Grid.Row="0" Grid.Column="0" Content="番号:"/>
                     <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
-                        <TextBox x:Name="CardNumberLineEdit" Width="120"/>
+                        <TextBox x:Name="CardNumberLineEdit" Width="150"/>
                         <Label Content="CVV"/>
                         <TextBox x:Name="CvvLineEdit" Width="50"/>
                     </StackPanel>

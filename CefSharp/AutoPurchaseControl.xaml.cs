@@ -9,7 +9,7 @@ namespace CefSharp.fastBOT
 {
     /// <summary>
     /// AutoPurchaseControl.xaml の相互作用ロジック
-    /// 自動購入機能のコントロールパネル（UserControl）
+    /// 自動購入機能のコントロールパネル（UserControl）改良版
     /// </summary>
     public partial class AutoPurchaseControl : UserControl
     {
@@ -25,7 +25,9 @@ namespace CefSharp.fastBOT
 
         // HTML取得関連
         private string _lastHtmlContent;
-        private PageInfo _lastPageInfo;
+
+        // アカウント切り替え管理
+        private bool _isUpdatingAccount = false;
 
         // MainWindowのブラウザを参照するためのプロパティ
         public BrowserTabManager BrowserTabManager { get; set; }
@@ -53,6 +55,10 @@ namespace CefSharp.fastBOT
                 _proxyRotationTimer = new System.Timers.Timer();
                 _proxyRotationTimer.Elapsed += ProxyRotationTimer_Elapsed;
 
+                // アカウントマネージャーのイベントハンドラーを設定
+                _accountManager.CurrentAccountChanged += AccountManager_CurrentAccountChanged;
+                _accountManager.AccountListUpdated += AccountManager_AccountListUpdated;
+
                 // イベントハンドラーを設定
                 SetupEventHandlers();
 
@@ -72,12 +78,6 @@ namespace CefSharp.fastBOT
         {
             try
             {
-                // HTML取得ボタンのイベントハンドラー
-                GetPageHtmlButton.Click += GetPageHtmlButton_Click;
-                GetBodyHtmlButton.Click += GetBodyHtmlButton_Click;
-                GetElementHtmlButton.Click += GetElementHtmlButton_Click;
-                GetPageTextButton.Click += GetPageTextButton_Click;
-
                 // アカウント管理のイベントハンドラー
                 if (AccountComboBox != null)
                 {
@@ -169,7 +169,7 @@ namespace CefSharp.fastBOT
         }
 
         /// <summary>
-        /// アカウントコンボボックスを初期化
+        /// アカウントコンボボックスを初期化（1-10のスロット）
         /// </summary>
         private void InitializeAccountComboBox()
         {
@@ -177,20 +177,34 @@ namespace CefSharp.fastBOT
             {
                 if (AccountComboBox != null)
                 {
-                    var accounts = _accountManager.GetActiveAccounts();
-                    AccountComboBox.ItemsSource = accounts;
+                    _isUpdatingAccount = true;
 
-                    if (accounts.Count > 0)
+                    AccountComboBox.Items.Clear();
+
+                    // 1-10のアカウントスロットを追加
+                    for (int i = 1; i <= _accountManager.MaxAccounts; i++)
                     {
-                        AccountComboBox.SelectedIndex = 0;
+                        var account = _accountManager.GetAccountByNumber(i);
+                        AccountComboBox.Items.Add(account.GetDisplayText());
                     }
 
-                    Console.WriteLine($"Account combo box initialized with {accounts.Count} accounts");
+                    // デフォルトで1番目のアカウントを選択
+                    if (AccountComboBox.Items.Count > 0)
+                    {
+                        AccountComboBox.SelectedIndex = 0;
+                        var firstAccount = _accountManager.GetAccountByNumber(1);
+                        LoadAccountToUI(firstAccount);
+                        _accountManager.SetCurrentAccount(firstAccount);
+                    }
+
+                    _isUpdatingAccount = false;
+                    Console.WriteLine($"Account combo box initialized with {AccountComboBox.Items.Count} slots");
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"InitializeAccountComboBox error: {ex.Message}");
+                _isUpdatingAccount = false;
             }
         }
 
@@ -221,151 +235,149 @@ namespace CefSharp.fastBOT
             }
         }
 
-        #region HTML取得イベントハンドラー
+        #region アカウント管理イベント
 
-        private async void GetPageHtmlButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// アカウントマネージャーのCurrentAccountChangedイベントハンドラー
+        /// </summary>
+        private void AccountManager_CurrentAccountChanged(object sender, AccountInfo account)
         {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                UpdateAccountStatus(account);
+            });
+        }
+
+        /// <summary>
+        /// アカウントマネージャーのAccountListUpdatedイベントハンドラー
+        /// </summary>
+        private void AccountManager_AccountListUpdated(object sender, EventArgs e)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                RefreshAccountComboBox();
+            });
+        }
+
+        /// <summary>
+        /// アカウントコンボボックスの選択変更イベント
+        /// </summary>
+        private void AccountComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isUpdatingAccount) return;
+
             try
             {
-                if (_htmlService == null)
+                if (AccountComboBox.SelectedIndex >= 0)
                 {
-                    UpdateStatus("HTML取得サービスが初期化されていません");
-                    return;
+                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+
+                    LoadAccountToUI(account);
+                    _accountManager.SetCurrentAccount(account);
+
+                    UpdateStatus($"アカウント{selectedAccountNumber}に切り替えました");
                 }
-
-                UpdateStatus("ページ解析中...");
-
-                var html = await _htmlService.GetPageHtmlAsync();
-                var pageInfo = await _htmlService.GetPageInfoAsync();
-
-                _lastHtmlContent = html;
-                _lastPageInfo = pageInfo as PageInfo;
-
-                UpdateHtmlStatus($"ページ解析完了 ({html.Length:N0}文字)");
-
-                if (AutoSaveCheckBox.IsChecked == true)
-                {
-                    await AutoSaveHtml("page_analysis");
-                }
-
-                var preview = html.Length > 200 ? html.Substring(0, 200) + "..." : html;
-                Console.WriteLine($"Page HTML Preview: {preview}");
             }
             catch (Exception ex)
             {
-                UpdateStatus($"ページHTML取得エラー: {ex.Message}");
-                Console.WriteLine($"GetPageHtmlButton_Click error: {ex.Message}");
+                Console.WriteLine($"AccountComboBox_SelectionChanged error: {ex.Message}");
             }
         }
 
-        private async void GetBodyHtmlButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// アカウント保存ボタンクリックイベント
+        /// </summary>
+        private async void SaveAccountButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                if (_htmlService == null)
+                if (AccountComboBox.SelectedIndex >= 0)
                 {
-                    UpdateStatus("HTML取得サービスが初期化されていません");
-                    return;
+                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+
+                    SaveUIToAccount(account);
+                    account.IsActive = true; // データが入力されたアカウントは有効化
+
+                    await _accountManager.UpdateAccountAsync(account);
+                    RefreshAccountComboBox();
+                    UpdateStatus($"アカウント{selectedAccountNumber}の情報を保存しました");
                 }
-
-                UpdateStatus("コンテンツ解析中...");
-
-                var html = await _htmlService.GetPageBodyHtmlAsync();
-                _lastHtmlContent = html;
-
-                UpdateHtmlStatus($"コンテンツ解析完了 ({html.Length:N0}文字)");
-
-                if (AutoSaveCheckBox.IsChecked == true)
-                {
-                    await AutoSaveHtml("content_analysis");
-                }
-
-                var preview = html.Length > 200 ? html.Substring(0, 200) + "..." : html;
-                Console.WriteLine($"Body HTML Preview: {preview}");
             }
             catch (Exception ex)
             {
-                UpdateStatus($"Body HTML取得エラー: {ex.Message}");
-                Console.WriteLine($"GetBodyHtmlButton_Click error: {ex.Message}");
+                UpdateStatus($"アカウント保存エラー: {ex.Message}");
             }
         }
 
-        private async void GetElementHtmlButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 新規アカウントボタンクリックイベント（クリア機能として動作）
+        /// </summary>
+        private void NewAccountButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                if (_htmlService == null)
+                if (AccountComboBox.SelectedIndex >= 0)
                 {
-                    UpdateStatus("HTML取得サービスが初期化されていません");
-                    return;
+                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+
+                    // フォームをクリア
+                    ClearUI();
+
+                    UpdateStatus($"アカウント{selectedAccountNumber}のフォームをクリアしました");
                 }
+            }
+            catch (Exception ex)
+            {
+                UpdateStatus($"フォームクリアエラー: {ex.Message}");
+            }
+        }
 
-                var selector = SelectorTextBox.Text.Trim();
-                if (string.IsNullOrEmpty(selector))
+        /// <summary>
+        /// アカウント削除ボタンクリックイベント
+        /// </summary>
+        private async void DeleteAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (AccountComboBox.SelectedIndex >= 0)
                 {
-                    UpdateStatus("監視対象セレクターを入力してください");
-                    return;
-                }
+                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
 
-                UpdateStatus($"要素監視中... (対象: {selector})");
+                    var result = MessageBox.Show($"アカウント{selectedAccountNumber}のデータを削除しますか？",
+                        "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
-                var html = await _htmlService.GetElementHtmlAsync(selector);
-                _lastHtmlContent = html;
-
-                if (string.IsNullOrEmpty(html))
-                {
-                    UpdateHtmlStatus("指定された要素が見つかりませんでした");
-                }
-                else
-                {
-                    UpdateHtmlStatus($"要素監視完了 ({html.Length:N0}文字)");
-
-                    if (AutoSaveCheckBox.IsChecked == true)
+                    if (result == MessageBoxResult.Yes)
                     {
-                        await AutoSaveHtml($"element_monitor_{selector.Replace(" ", "_").Replace("#", "").Replace(".", "")}");
+                        await _accountManager.ClearAccountAsync(selectedAccountNumber);
+                        ClearUI();
+                        RefreshAccountComboBox();
+                        UpdateStatus($"アカウント{selectedAccountNumber}のデータを削除しました");
                     }
                 }
-
-                var preview = html.Length > 200 ? html.Substring(0, 200) + "..." : html;
-                Console.WriteLine($"Element HTML Preview: {preview}");
             }
             catch (Exception ex)
             {
-                UpdateStatus($"要素HTML取得エラー: {ex.Message}");
-                Console.WriteLine($"GetElementHtmlButton_Click error: {ex.Message}");
+                UpdateStatus($"アカウント削除エラー: {ex.Message}");
             }
         }
 
-        private async void GetPageTextButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// フォーム入力変更イベント
+        /// </summary>
+        private void FormField_Changed(object sender, EventArgs e)
         {
-            try
-            {
-                if (_htmlService == null)
-                {
-                    UpdateStatus("HTML取得サービスが初期化されていません");
-                    return;
-                }
+            // フィールド変更時の処理（自動保存などが必要な場合に実装）
+        }
 
-                UpdateStatus("テキスト抽出中...");
-
-                var text = await _htmlService.GetPageTextAsync();
-                _lastHtmlContent = text;
-
-                UpdateHtmlStatus($"テキスト抽出完了 ({text.Length:N0}文字)");
-
-                if (AutoSaveCheckBox.IsChecked == true)
-                {
-                    await AutoSaveText("text_extraction");
-                }
-
-                var preview = text.Length > 300 ? text.Substring(0, 300) + "..." : text;
-                Console.WriteLine($"Page Text Preview: {preview}");
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"ページテキスト取得エラー: {ex.Message}");
-                Console.WriteLine($"GetPageTextButton_Click error: {ex.Message}");
-            }
+        /// <summary>
+        /// 全選択チェックボックスクリックイベント
+        /// </summary>
+        private void AllCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            // TODO: 全イベント選択/解除
         }
 
         #endregion
@@ -632,100 +644,6 @@ namespace CefSharp.fastBOT
 
         #endregion
 
-        #region アカウント管理イベント
-
-        private void AccountComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            try
-            {
-                if (AccountComboBox.SelectedItem is AccountInfo account)
-                {
-                    LoadAccountToUI(account);
-                    UpdateAccountStatus(account);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"AccountComboBox_SelectionChanged error: {ex.Message}");
-            }
-        }
-
-        private async void SaveAccountButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (AccountComboBox.SelectedItem is AccountInfo account)
-                {
-                    SaveUIToAccount(account);
-                    await _accountManager.UpdateAccountAsync(account);
-                    UpdateStatus("アカウント情報を保存しました");
-                }
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"アカウント保存エラー: {ex.Message}");
-            }
-        }
-
-        private async void NewAccountButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var newAccount = new AccountInfo
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = $"アカウント{DateTime.Now:MMdd_HHmm}",
-                    CreatedAt = DateTime.Now,
-                    IsActive = true
-                };
-
-                SaveUIToAccount(newAccount);
-                await _accountManager.AddAccountAsync(newAccount);
-                InitializeAccountComboBox();
-                UpdateStatus("新しいアカウントを作成しました");
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"アカウント作成エラー: {ex.Message}");
-            }
-        }
-
-        private async void DeleteAccountButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                if (AccountComboBox.SelectedItem is AccountInfo account)
-                {
-                    var result = MessageBox.Show($"アカウント '{account.Name}' を削除しますか？",
-                        "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
-
-                    if (result == MessageBoxResult.Yes)
-                    {
-                        await _accountManager.DeleteAccountAsync(account.Id);
-                        InitializeAccountComboBox();
-                        ClearUI();
-                        UpdateStatus("アカウントを削除しました");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"アカウント削除エラー: {ex.Message}");
-            }
-        }
-
-        private void FormField_Changed(object sender, EventArgs e)
-        {
-            // フィールド変更時の処理（必要に応じて実装）
-        }
-
-        private void AllCheckBox_Click(object sender, RoutedEventArgs e)
-        {
-            // TODO: 全イベント選択/解除
-        }
-
-        #endregion
-
         #region ヘルパーメソッド
 
         /// <summary>
@@ -737,6 +655,22 @@ namespace CefSharp.fastBOT
             {
                 account.LoginId = LoginEdit.Text;
                 account.Password = PasswordEdit.Password;
+
+                // Proxy設定
+                var proxyParts = ProxyLineEdit.Text.Split(':');
+                if (proxyParts.Length >= 2)
+                {
+                    account.ProxyHost = proxyParts[0];
+                    if (int.TryParse(proxyParts[1], out int port))
+                        account.ProxyPort = port;
+                }
+
+                account.UseProxyRotation = ProxyRotationCheckBox.IsChecked == true;
+                account.RotationPerRequest = PerRequestRadioButton.IsChecked == true;
+                if (int.TryParse(ProxyEverySecondLineEdit.Text, out int interval))
+                    account.RotationIntervalSeconds = interval;
+
+                // 購入者情報
                 account.LastName = LastNameLineEdit.Text;
                 account.FirstName = FirstNameLineEdit.Text;
                 account.LastKana = LastKanaLineEdit.Text;
@@ -745,6 +679,8 @@ namespace CefSharp.fastBOT
                 account.Tel1 = Tel1LineEdit.Text;
                 account.Tel2 = Tel2LineEdit.Text;
                 account.Tel3 = Tel3LineEdit.Text;
+
+                // クレジットカード情報
                 account.CardNumber = CardNumberLineEdit.Text;
                 account.Cvv = CvvLineEdit.Text;
                 account.CardName = CardNameLineEdit.Text;
@@ -767,8 +703,23 @@ namespace CefSharp.fastBOT
         {
             try
             {
+                _isUpdatingAccount = true;
+
+                // ログイン情報
                 LoginEdit.Text = account.LoginId ?? "";
                 PasswordEdit.Password = account.Password ?? "";
+
+                // Proxy設定
+                if (!string.IsNullOrEmpty(account.ProxyHost))
+                {
+                    ProxyLineEdit.Text = $"{account.ProxyHost}:{account.ProxyPort}";
+                }
+                ProxyRotationCheckBox.IsChecked = account.UseProxyRotation;
+                PerRequestRadioButton.IsChecked = account.RotationPerRequest;
+                EverySecondRadioButton.IsChecked = !account.RotationPerRequest;
+                ProxyEverySecondLineEdit.Text = account.RotationIntervalSeconds.ToString();
+
+                // 購入者情報
                 LastNameLineEdit.Text = account.LastName ?? "";
                 FirstNameLineEdit.Text = account.FirstName ?? "";
                 LastKanaLineEdit.Text = account.LastKana ?? "";
@@ -777,10 +728,13 @@ namespace CefSharp.fastBOT
                 Tel1LineEdit.Text = account.Tel1 ?? "";
                 Tel2LineEdit.Text = account.Tel2 ?? "";
                 Tel3LineEdit.Text = account.Tel3 ?? "";
+
+                // クレジットカード情報
                 CardNumberLineEdit.Text = account.CardNumber ?? "";
                 CvvLineEdit.Text = account.Cvv ?? "";
                 CardNameLineEdit.Text = account.CardName ?? "";
 
+                // 有効期限
                 if (!string.IsNullOrEmpty(account.ExpiryMonth))
                 {
                     for (int i = 0; i < MonthComboBox.Items.Count; i++)
@@ -804,10 +758,13 @@ namespace CefSharp.fastBOT
                         }
                     }
                 }
+
+                _isUpdatingAccount = false;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"LoadAccountToUI error: {ex.Message}");
+                _isUpdatingAccount = false;
             }
         }
 
@@ -818,8 +775,14 @@ namespace CefSharp.fastBOT
         {
             try
             {
+                _isUpdatingAccount = true;
+
                 LoginEdit.Text = "";
                 PasswordEdit.Password = "";
+                ProxyLineEdit.Text = "127.0.0.1:8080";
+                ProxyRotationCheckBox.IsChecked = false;
+                PerRequestRadioButton.IsChecked = true;
+                ProxyEverySecondLineEdit.Text = "30";
                 LastNameLineEdit.Text = "";
                 FirstNameLineEdit.Text = "";
                 LastKanaLineEdit.Text = "";
@@ -833,10 +796,47 @@ namespace CefSharp.fastBOT
                 CardNameLineEdit.Text = "";
                 MonthComboBox.SelectedIndex = 0;
                 YearComboBox.SelectedIndex = 0;
+
+                _isUpdatingAccount = false;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"ClearUI error: {ex.Message}");
+                _isUpdatingAccount = false;
+            }
+        }
+
+        /// <summary>
+        /// アカウントコンボボックスを更新
+        /// </summary>
+        private void RefreshAccountComboBox()
+        {
+            try
+            {
+                _isUpdatingAccount = true;
+
+                int currentSelectedIndex = AccountComboBox.SelectedIndex;
+                AccountComboBox.Items.Clear();
+
+                // 1-10のアカウントスロットを再追加
+                for (int i = 1; i <= _accountManager.MaxAccounts; i++)
+                {
+                    var account = _accountManager.GetAccountByNumber(i);
+                    AccountComboBox.Items.Add(account.GetDisplayText());
+                }
+
+                // 選択状態を復元
+                if (currentSelectedIndex >= 0 && currentSelectedIndex < AccountComboBox.Items.Count)
+                {
+                    AccountComboBox.SelectedIndex = currentSelectedIndex;
+                }
+
+                _isUpdatingAccount = false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"RefreshAccountComboBox error: {ex.Message}");
+                _isUpdatingAccount = false;
             }
         }
 
@@ -867,36 +867,6 @@ namespace CefSharp.fastBOT
             catch (Exception ex)
             {
                 Console.WriteLine($"AutoSaveHtml error: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// テキスト自動保存
-        /// </summary>
-        private async Task AutoSaveText(string filePrefix)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(_lastHtmlContent))
-                    return;
-
-                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                var fileName = $"{filePrefix}_{timestamp}.txt";
-                var filePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "fastBOT_HTML", fileName);
-
-                // ディレクトリを作成
-                var directory = System.IO.Path.GetDirectoryName(filePath);
-                if (!System.IO.Directory.Exists(directory))
-                {
-                    System.IO.Directory.CreateDirectory(directory);
-                }
-
-                await System.IO.File.WriteAllTextAsync(filePath, _lastHtmlContent, System.Text.Encoding.UTF8);
-                UpdateStatus($"解析ログ自動保存: {fileName}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"AutoSaveText error: {ex.Message}");
             }
         }
 
@@ -948,7 +918,6 @@ namespace CefSharp.fastBOT
                 Console.WriteLine($"UpdateHtmlStatus error: {ex.Message}");
             }
         }
-
         private void UpdateAccountStatus(AccountInfo account)
         {
             try
@@ -959,7 +928,7 @@ namespace CefSharp.fastBOT
                     {
                         if (account != null)
                         {
-                            AccountStatusText.Text = $"アカウント: {account.Name}";
+                            AccountStatusText.Text = $"アカウント: {account.GetDisplayText()}";
                         }
                         else
                         {
@@ -984,14 +953,6 @@ namespace CefSharp.fastBOT
         public string GetLastHtmlContent()
         {
             return _lastHtmlContent;
-        }
-
-        /// <summary>
-        /// 最後に取得したページ情報を取得
-        /// </summary>
-        public PageInfo GetLastPageInfo()
-        {
-            return _lastPageInfo;
         }
 
         /// <summary>
@@ -1036,6 +997,57 @@ namespace CefSharp.fastBOT
             }
         }
 
+        /// <summary>
+        /// 現在選択されているアカウント番号を取得
+        /// </summary>
+        public int GetCurrentAccountNumber()
+        {
+            return AccountComboBox.SelectedIndex + 1;
+        }
+
+        /// <summary>
+        /// 指定したアカウント番号を選択
+        /// </summary>
+        public void SelectAccount(int accountNumber)
+        {
+            if (accountNumber >= 1 && accountNumber <= _accountManager.MaxAccounts)
+            {
+                AccountComboBox.SelectedIndex = accountNumber - 1;
+            }
+        }
+
+        /// <summary>
+        /// 現在のアカウント情報を強制保存
+        /// </summary>
+        public async Task<bool> SaveCurrentAccountAsync()
+        {
+            try
+            {
+                if (AccountComboBox.SelectedIndex >= 0)
+                {
+                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+
+                    SaveUIToAccount(account);
+                    account.IsActive = account.HasData(); // データがある場合のみ有効化
+
+                    bool result = await _accountManager.UpdateAccountAsync(account);
+                    if (result)
+                    {
+                        RefreshAccountComboBox();
+                        UpdateStatus($"アカウント{selectedAccountNumber}を自動保存しました");
+                    }
+                    return result;
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SaveCurrentAccountAsync error: {ex.Message}");
+                return false;
+            }
+        }
+
         #endregion
 
         #region リソースクリーンアップ
@@ -1047,10 +1059,21 @@ namespace CefSharp.fastBOT
         {
             try
             {
-                // リソースを解放
+                // タイマーを停止・解放
                 _proxyRotationTimer?.Stop();
                 _proxyRotationTimer?.Dispose();
+
+                // サービスを解放
                 _automationService?.Dispose();
+
+                // アカウント情報を最終保存
+                if (AccountComboBox.SelectedIndex >= 0)
+                {
+                    Task.Run(async () => await SaveCurrentAccountAsync());
+                }
+
+                // アカウントマネージャーを解放
+                _accountManager?.Dispose();
 
                 Console.WriteLine("AutoPurchaseControl disposed successfully");
             }

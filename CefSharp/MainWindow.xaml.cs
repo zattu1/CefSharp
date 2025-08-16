@@ -1,5 +1,6 @@
 using CefSharp.fastBOT.Core;
 using CefSharp.fastBOT.Models;
+using CefSharp.fastBOT.Utils;
 using CefSharp.Wpf;
 using System;
 using System.Collections.Generic;
@@ -31,6 +32,8 @@ namespace CefSharp.fastBOT
             InitializeUI();
             CreateInitialTab();
         }
+
+        #region 初期化
 
         /// <summary>
         /// 基本的なマネージャーを初期化
@@ -150,6 +153,9 @@ namespace CefSharp.fastBOT
                 // デフォルトURL設定
                 UrlLineEdit.Text = "https://www.yahoo.co.jp/";
 
+                // ボタンの初期状態を設定
+                UpdateButtonStates();
+
                 UpdateStatus("fastBOT initialized");
                 Console.WriteLine("UI initialized successfully");
             }
@@ -172,62 +178,7 @@ namespace CefSharp.fastBOT
                 if (tab != null)
                 {
                     // ブラウザイベントの設定
-                    tab.Browser.IsBrowserInitializedChanged += Browser_IsBrowserInitializedChanged;
-                    tab.Browser.AddressChanged += Browser_AddressChanged;
-
-                    // タイトル変更イベントの追加設定
-                    tab.Browser.TitleChanged += (sender, args) =>
-                    {
-                        Console.WriteLine($"Page title changed: {args.NewValue}");
-                    };
-
-                    // LoadingStateChangedイベントでFaviconの再取得を確実に行う
-                    tab.Browser.LoadingStateChanged += (sender, args) =>
-                    {
-                        try
-                        {
-                            if (!args.IsLoading)
-                            {
-                                // 読み込み完了後、少し遅延してFaviconを取得（重複を避けるため条件付き）
-                                Task.Delay(2000).ContinueWith(_ =>
-                                {
-                                    try
-                                    {
-                                        // UIスレッドで安全に実行
-                                        Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                                        {
-                                            try
-                                            {
-                                                var currentUrl = tab.Browser?.Address;
-                                                if (!string.IsNullOrEmpty(currentUrl) && tab.Browser != null)
-                                                {
-                                                    // 現在のタブかどうかを安全にチェック
-                                                    var currentTab = _tabManager?.GetCurrentTab();
-                                                    if (currentTab?.Browser == tab.Browser)
-                                                    {
-                                                        Console.WriteLine($"Loading address favicon for: {currentUrl}");
-                                                        UpdateAddressFaviconFromTab(currentUrl);
-                                                    }
-                                                }
-                                            }
-                                            catch (Exception ex)
-                                            {
-                                                Console.WriteLine($"Favicon update error: {ex.Message}");
-                                            }
-                                        }), System.Windows.Threading.DispatcherPriority.Background);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        Console.WriteLine($"Favicon task error: {ex.Message}");
-                                    }
-                                }, TaskScheduler.Current);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"LoadingStateChanged error: {ex.Message}");
-                        }
-                    };
+                    SetupBrowserEvents(tab.Browser);
 
                     // デフォルトのFaviconを設定（UIスレッドで実行）
                     Application.Current.Dispatcher.Invoke(() =>
@@ -255,6 +206,84 @@ namespace CefSharp.fastBOT
             }
         }
 
+        /// <summary>
+        /// ブラウザイベントを設定
+        /// </summary>
+        /// <param name="browser">対象ブラウザ</param>
+        private void SetupBrowserEvents(ChromiumWebBrowser browser)
+        {
+            if (browser == null) return;
+
+            // ブラウザ初期化完了イベント
+            browser.IsBrowserInitializedChanged += Browser_IsBrowserInitializedChanged;
+
+            // アドレス変更イベント
+            browser.AddressChanged += Browser_AddressChanged;
+
+            // タイトル変更イベント
+            browser.TitleChanged += (sender, args) =>
+            {
+                Console.WriteLine($"Page title changed: {args.NewValue}");
+            };
+
+            // 読み込み状態変更イベント（ナビゲーション状態の監視用）
+            browser.LoadingStateChanged += (sender, args) =>
+            {
+                try
+                {
+                    // UIスレッドで安全にボタン状態を更新
+                    Dispatcher.Invoke(() =>
+                    {
+                        // LoadingStateChangedEventArgsから直接ナビゲーション状態を取得
+                        UpdateNavigationButtonStates(args.CanGoBack, args.CanGoForward, args.CanReload);
+
+                        Console.WriteLine($"Navigation state updated - CanGoBack: {args.CanGoBack}, CanGoForward: {args.CanGoForward}, IsLoading: {args.IsLoading}");
+
+                        if (!args.IsLoading)
+                        {
+                            // 読み込み完了後、少し遅延してFaviconを取得
+                            Task.Delay(500).ContinueWith(_ =>
+                            {
+                                try
+                                {
+                                    Dispatcher.BeginInvoke(new Action(() =>
+                                    {
+                                        try
+                                        {
+                                            var currentUrl = browser?.Address;
+                                            if (!string.IsNullOrEmpty(currentUrl))
+                                            {
+                                                var currentTab = _tabManager?.GetCurrentTab();
+                                                if (currentTab?.Browser == browser)
+                                                {
+                                                    Console.WriteLine($"Loading address favicon for: {currentUrl}");
+                                                    UpdateAddressFaviconFromTab(currentUrl);
+                                                }
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine($"Favicon update error: {ex.Message}");
+                                        }
+                                    }), System.Windows.Threading.DispatcherPriority.Background);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Favicon task error: {ex.Message}");
+                                }
+                            }, TaskScheduler.Current);
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"LoadingStateChanged error: {ex.Message}");
+                }
+            };
+        }
+
+        #endregion
+
         #region ブラウザイベント
 
         private void Browser_IsBrowserInitializedChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -265,6 +294,7 @@ namespace CefSharp.fastBOT
                 {
                     UpdateButtonStates();
                     UpdateRequestContextInfo();
+                    Console.WriteLine("Browser initialized and button states updated");
                 });
             }
         }
@@ -317,6 +347,9 @@ namespace CefSharp.fastBOT
                         {
                             Console.WriteLine($"Favicon reset error: {ex.Message}");
                         }
+
+                        // アドレス変更時にもボタン状態を更新
+                        UpdateButtonStates();
                     }
                 }
             }
@@ -334,10 +367,15 @@ namespace CefSharp.fastBOT
                 if (Application.Current.Dispatcher.CheckAccess())
                 {
                     UpdateUrlLineEdit(newUrl);
+                    UpdateButtonStates(); // タブ切り替え時にもボタン状態を更新
                 }
                 else
                 {
-                    Application.Current.Dispatcher.Invoke(() => UpdateUrlLineEdit(newUrl));
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        UpdateUrlLineEdit(newUrl);
+                        UpdateButtonStates();
+                    });
                 }
             }
             catch (Exception ex)
@@ -372,155 +410,83 @@ namespace CefSharp.fastBOT
 
         #endregion
 
-        #region インスタンス管理機能
-
-        /// <summary>
-        /// 全インスタンスの情報を取得
-        /// </summary>
-        /// <returns>インスタンス情報のリスト</returns>
-        public List<InstanceInfo> GetAllInstancesInfo()
-        {
-            return RequestContextManager.GetAllInstancesInfo();
-        }
-
-        /// <summary>
-        /// 現在のインスタンス番号を取得
-        /// </summary>
-        /// <returns>インスタンス番号</returns>
-        public int GetCurrentInstanceNumber()
-        {
-            return _requestContextManager?.GetInstanceNumber() ?? 0;
-        }
-
-        /// <summary>
-        /// 現在のインスタンスのキャッシュサイズを取得
-        /// </summary>
-        /// <returns>キャッシュサイズ（バイト）</returns>
-        public long GetCurrentInstanceCacheSize()
-        {
-            return _requestContextManager?.GetCacheSize() ?? 0;
-        }
-
-        /// <summary>
-        /// 現在のインスタンスのキャッシュをクリア
-        /// </summary>
-        /// <param name="contextName">特定のコンテキスト名（nullの場合は全体）</param>
-        /// <returns>成功した場合true</returns>
-        public bool ClearCurrentInstanceCache(string contextName = null)
-        {
-            try
-            {
-                var result = _requestContextManager?.ClearCache(contextName) ?? false;
-                if (result)
-                {
-                    var message = string.IsNullOrEmpty(contextName)
-                        ? "全キャッシュをクリアしました"
-                        : $"コンテキスト '{contextName}' のキャッシュをクリアしました";
-                    UpdateStatus(message);
-                }
-                return result;
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"キャッシュクリアに失敗しました: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// インスタンス管理情報をコンソールに出力
-        /// </summary>
-        public void ShowInstanceManagementInfo()
-        {
-            try
-            {
-                Console.WriteLine("=== Instance Management Info ===");
-                Console.WriteLine($"Current Instance: {GetCurrentInstanceNumber()}");
-                Console.WriteLine($"Current Cache Size: {FormatBytes(GetCurrentInstanceCacheSize())}");
-                Console.WriteLine($"Current Cache Path: {_requestContextManager?.GetBaseCachePath()}");
-
-                Console.WriteLine("\nAll Instances:");
-                var instances = GetAllInstancesInfo();
-                foreach (var instance in instances)
-                {
-                    Console.WriteLine($"  {instance}");
-                }
-                Console.WriteLine("================================");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ShowInstanceManagementInfo error: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// バイト数を人間が読みやすい形式にフォーマット
-        /// </summary>
-        /// <param name="bytes">バイト数</param>
-        /// <returns>フォーマットされた文字列</returns>
-        private string FormatBytes(long bytes)
-        {
-            if (bytes < 1024)
-                return $"{bytes} B";
-            else if (bytes < 1024 * 1024)
-                return $"{bytes / 1024.0:F1} KB";
-            else if (bytes < 1024 * 1024 * 1024)
-                return $"{bytes / (1024.0 * 1024.0):F1} MB";
-            else
-                return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
-        }
-
-        /// <summary>
-        /// インスタンス管理ウィンドウを表示（将来の拡張用）
-        /// </summary>
-        public void ShowInstanceManagementWindow()
-        {
-            try
-            {
-                // TODO: インスタンス管理専用ウィンドウを実装
-                ShowInstanceManagementInfo();
-                UpdateStatus("インスタンス管理情報をコンソールに出力しました");
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"インスタンス管理ウィンドウの表示に失敗しました: {ex.Message}");
-            }
-        }
-
-        #endregion
-
         #region ブラウザコントロール
 
         private void PrevButton_Click(object sender, RoutedEventArgs e)
         {
-            var browser = _tabManager.GetCurrentBrowser();
-            if (browser?.CanGoBack == true)
+            try
             {
-                browser.Back();
+                var browser = _tabManager?.GetCurrentBrowser();
+                if (browser?.CanGoBack == true)
+                {
+                    Console.WriteLine("Going back...");
+                    browser.Back();
+                    // LoadingStateChangedイベントで自動的にボタン状態が更新される
+                }
+                else
+                {
+                    Console.WriteLine($"Cannot go back. Browser: {browser != null}, CanGoBack: {browser?.CanGoBack}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"PrevButton_Click error: {ex.Message}");
             }
         }
 
         private void NextButton_Click(object sender, RoutedEventArgs e)
         {
-            var browser = _tabManager.GetCurrentBrowser();
-            if (browser?.CanGoForward == true)
+            try
             {
-                browser.Forward();
+                var browser = _tabManager?.GetCurrentBrowser();
+                if (browser?.CanGoForward == true)
+                {
+                    Console.WriteLine("Going forward...");
+                    browser.Forward();
+                    // LoadingStateChangedイベントで自動的にボタン状態が更新される
+                }
+                else
+                {
+                    Console.WriteLine($"Cannot go forward. Browser: {browser != null}, CanGoForward: {browser?.CanGoForward}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"NextButton_Click error: {ex.Message}");
             }
         }
 
         private void ReloadButton_Click(object sender, RoutedEventArgs e)
         {
-            var browser = _tabManager.GetCurrentBrowser();
-            browser?.Reload();
+            try
+            {
+                var browser = _tabManager?.GetCurrentBrowser();
+                if (browser != null)
+                {
+                    Console.WriteLine("Reloading page...");
+                    browser.Reload();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ReloadButton_Click error: {ex.Message}");
+            }
         }
 
         private void TopButton_Click(object sender, RoutedEventArgs e)
         {
-            var browser = _tabManager.GetCurrentBrowser();
-            if (browser != null)
+            try
             {
-                browser.Address = "https://www.yahoo.co.jp/";
+                var browser = _tabManager?.GetCurrentBrowser();
+                if (browser != null)
+                {
+                    Console.WriteLine("Navigating to top page...");
+                    browser.Address = "https://www.yahoo.co.jp/";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"TopButton_Click error: {ex.Message}");
             }
         }
 
@@ -539,15 +505,23 @@ namespace CefSharp.fastBOT
 
         private void NavigateToUrl()
         {
-            var browser = _tabManager.GetCurrentBrowser();
-            if (browser != null && !string.IsNullOrEmpty(UrlLineEdit.Text))
+            try
             {
-                string url = UrlLineEdit.Text;
-                if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+                var browser = _tabManager?.GetCurrentBrowser();
+                if (browser != null && !string.IsNullOrEmpty(UrlLineEdit.Text))
                 {
-                    url = "https://" + url;
+                    string url = UrlLineEdit.Text;
+                    if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+                    {
+                        url = "https://" + url;
+                    }
+                    Console.WriteLine($"Navigating to: {url}");
+                    browser.Address = url;
                 }
-                browser.Address = url;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"NavigateToUrl error: {ex.Message}");
             }
         }
 
@@ -628,8 +602,7 @@ namespace CefSharp.fastBOT
                 if (tab != null)
                 {
                     // ブラウザイベントの設定
-                    tab.Browser.IsBrowserInitializedChanged += Browser_IsBrowserInitializedChanged;
-                    tab.Browser.AddressChanged += Browser_AddressChanged;
+                    SetupBrowserEvents(tab.Browser);
 
                     UpdateStatus("新しいタブを作成しました");
                 }
@@ -652,6 +625,8 @@ namespace CefSharp.fastBOT
                 {
                     _tabManager.CloseTab(currentTab);
                     UpdateStatus("タブを閉じました");
+                    // タブを閉じた後にボタン状態を更新
+                    UpdateButtonStates();
                 }
                 else if (_tabManager.TabCount == 1)
                 {
@@ -687,6 +662,7 @@ namespace CefSharp.fastBOT
                     }
 
                     UpdateStatus($"{closedCount}個のタブを閉じました");
+                    UpdateButtonStates();
                 }
             }
             catch (Exception ex)
@@ -712,8 +688,7 @@ namespace CefSharp.fastBOT
                     if (newTab != null)
                     {
                         // ブラウザイベントの設定
-                        newTab.Browser.IsBrowserInitializedChanged += Browser_IsBrowserInitializedChanged;
-                        newTab.Browser.AddressChanged += Browser_AddressChanged;
+                        SetupBrowserEvents(newTab.Browser);
 
                         UpdateStatus("タブを複製しました");
                     }
@@ -764,6 +739,142 @@ namespace CefSharp.fastBOT
         {
             // TODO: 最近閉じたタブの履歴機能を実装
             UpdateStatus("タブ復元機能は未実装です");
+        }
+
+        #endregion
+
+        #region UI更新
+
+        /// <summary>
+        /// ナビゲーションボタンの状態を更新（LoadingStateChangedイベント用）
+        /// </summary>
+        /// <param name="canGoBack">戻ることができるかどうか</param>
+        /// <param name="canGoForward">進むことができるかどうか</param>
+        /// <param name="canReload">再読込できるかどうか</param>
+        private void UpdateNavigationButtonStates(bool canGoBack, bool canGoForward, bool canReload)
+        {
+            try
+            {
+                // デバッグ情報を出力
+                Console.WriteLine($"UpdateNavigationButtonStates called - CanGoBack: {canGoBack}, CanGoForward: {canGoForward}, CanReload: {canReload}");
+
+                // 各ボタンが存在するかチェックして更新
+                var prevButton = this.FindName("PrevButton") as Button;
+                var nextButton = this.FindName("NextButton") as Button;
+                var reloadButton = this.FindName("ReloadButton") as Button;
+                var goButton = this.FindName("GoButton") as Button;
+
+                if (prevButton != null)
+                {
+                    prevButton.IsEnabled = canGoBack;
+                    Console.WriteLine($"PrevButton enabled: {prevButton.IsEnabled}");
+                }
+                if (nextButton != null)
+                {
+                    nextButton.IsEnabled = canGoForward;
+                    Console.WriteLine($"NextButton enabled: {nextButton.IsEnabled}");
+                }
+                if (reloadButton != null) reloadButton.IsEnabled = canReload;
+                if (goButton != null) goButton.IsEnabled = true; // 移動ボタンは常に有効
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateNavigationButtonStates error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// ボタンの状態を更新（従来の方法、フォールバック用）
+        /// </summary>
+        private void UpdateButtonStates()
+        {
+            try
+            {
+                var browser = _tabManager?.GetCurrentBrowser();
+
+                // デバッグ情報を出力
+                Console.WriteLine($"UpdateButtonStates called. Browser: {browser != null}");
+                if (browser != null)
+                {
+                    Console.WriteLine($"  IsBrowserInitialized: {browser.IsBrowserInitialized}");
+                    Console.WriteLine($"  CanGoBack: {browser.CanGoBack}");
+                    Console.WriteLine($"  CanGoForward: {browser.CanGoForward}");
+                    Console.WriteLine($"  Current Address: {browser.Address}");
+                }
+
+                if (browser != null && browser.IsBrowserInitialized)
+                {
+                    // LoadingStateChangedイベントが利用できない場合のフォールバック
+                    UpdateNavigationButtonStates(browser.CanGoBack, browser.CanGoForward, true);
+                }
+                else
+                {
+                    // ブラウザがない場合は全てのボタンを無効化
+                    var prevButton = this.FindName("PrevButton") as Button;
+                    var nextButton = this.FindName("NextButton") as Button;
+                    var reloadButton = this.FindName("ReloadButton") as Button;
+                    var goButton = this.FindName("GoButton") as Button;
+
+                    if (prevButton != null) prevButton.IsEnabled = false;
+                    if (nextButton != null) nextButton.IsEnabled = false;
+                    if (reloadButton != null) reloadButton.IsEnabled = false;
+                    if (goButton != null) goButton.IsEnabled = false;
+
+                    Console.WriteLine("All buttons disabled (browser not initialized)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateButtonStates error: {ex.Message}");
+            }
+        }
+
+        private void UpdateStatus(string message)
+        {
+            try
+            {
+                // StatusTextコントロールが存在する場合のみ更新
+                var statusText = this.FindName("StatusText") as TextBlock;
+                if (statusText != null)
+                {
+                    statusText.Text = $"{DateTime.Now:HH:mm:ss} - {message}";
+                }
+                else
+                {
+                    // StatusTextが存在しない場合はコンソールに出力
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateStatus error: {ex.Message}");
+            }
+        }
+
+        private void UpdateRequestContextInfo()
+        {
+            try
+            {
+                var currentTab = _tabManager.GetCurrentTab();
+                if (currentTab != null)
+                {
+                    // RequestContextInfoコントロールが存在する場合のみ更新
+                    var requestContextInfo = this.FindName("RequestContextInfo") as TextBlock;
+                    if (requestContextInfo != null)
+                    {
+                        requestContextInfo.Text = $"Context: {currentTab.ContextName}";
+                    }
+                    else
+                    {
+                        // RequestContextInfoが存在しない場合はコンソールに出力
+                        Console.WriteLine($"RequestContext: {currentTab.ContextName}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateRequestContextInfo error: {ex.Message}");
+            }
         }
 
         #endregion
@@ -826,7 +937,7 @@ namespace CefSharp.fastBOT
                         using var httpClient = new System.Net.Http.HttpClient();
                         httpClient.Timeout = TimeSpan.FromSeconds(3);
                         httpClient.DefaultRequestHeaders.Add("User-Agent",
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36");
+                            UserAgentHelper.GetChromeUserAgent());
 
                         var imageData = await httpClient.GetByteArrayAsync(faviconUrl);
 
@@ -1167,98 +1278,124 @@ namespace CefSharp.fastBOT
 
         #endregion
 
-        #region UI更新
+        #region インスタンス管理機能
 
-        private void UpdateStatus(string message)
+        /// <summary>
+        /// 全インスタンスの情報を取得
+        /// </summary>
+        /// <returns>インスタンス情報のリスト</returns>
+        public List<InstanceInfo> GetAllInstancesInfo()
         {
-            try
-            {
-                // StatusTextコントロールが存在する場合のみ更新
-                var statusText = this.FindName("StatusText") as TextBlock;
-                if (statusText != null)
-                {
-                    statusText.Text = $"{DateTime.Now:HH:mm:ss} - {message}";
-                }
-                else
-                {
-                    // StatusTextが存在しない場合はコンソールに出力
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateStatus error: {ex.Message}");
-            }
+            return RequestContextManager.GetAllInstancesInfo();
         }
 
-        private void UpdateRequestContextInfo()
+        /// <summary>
+        /// 現在のインスタンス番号を取得
+        /// </summary>
+        /// <returns>インスタンス番号</returns>
+        public int GetCurrentInstanceNumber()
+        {
+            return _requestContextManager?.GetInstanceNumber() ?? 0;
+        }
+
+        /// <summary>
+        /// 現在のインスタンスのキャッシュサイズを取得
+        /// </summary>
+        /// <returns>キャッシュサイズ（バイト）</returns>
+        public long GetCurrentInstanceCacheSize()
+        {
+            return _requestContextManager?.GetCacheSize() ?? 0;
+        }
+
+        /// <summary>
+        /// 現在のインスタンスのキャッシュをクリア
+        /// </summary>
+        /// <param name="contextName">特定のコンテキスト名（nullの場合は全体）</param>
+        /// <returns>成功した場合true</returns>
+        public bool ClearCurrentInstanceCache(string contextName = null)
         {
             try
             {
-                var currentTab = _tabManager.GetCurrentTab();
-                if (currentTab != null)
+                var result = _requestContextManager?.ClearCache(contextName) ?? false;
+                if (result)
                 {
-                    // RequestContextInfoコントロールが存在する場合のみ更新
-                    var requestContextInfo = this.FindName("RequestContextInfo") as TextBlock;
-                    if (requestContextInfo != null)
-                    {
-                        requestContextInfo.Text = $"Context: {currentTab.ContextName}";
-                    }
-                    else
-                    {
-                        // RequestContextInfoが存在しない場合はコンソールに出力
-                        Console.WriteLine($"RequestContext: {currentTab.ContextName}");
-                    }
+                    var message = string.IsNullOrEmpty(contextName)
+                        ? "全キャッシュをクリアしました"
+                        : $"コンテキスト '{contextName}' のキャッシュをクリアしました";
+                    UpdateStatus(message);
                 }
+                return result;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"UpdateRequestContextInfo error: {ex.Message}");
+                UpdateStatus($"キャッシュクリアに失敗しました: {ex.Message}");
+                return false;
             }
         }
 
         /// <summary>
-        /// ボタンの状態を更新
+        /// インスタンス管理情報をコンソールに出力
         /// </summary>
-        private void UpdateButtonStates()
+        public void ShowInstanceManagementInfo()
         {
             try
             {
-                var browser = _tabManager.GetCurrentBrowser();
-                if (browser != null)
-                {
-                    // 各ボタンが存在するかチェックして更新
-                    var prevButton = this.FindName("PrevButton") as Button;
-                    var nextButton = this.FindName("NextButton") as Button;
-                    var reloadButton = this.FindName("ReloadButton") as Button;
-                    var goButton = this.FindName("GoButton") as Button;
+                Console.WriteLine("=== Instance Management Info ===");
+                Console.WriteLine($"Current Instance: {GetCurrentInstanceNumber()}");
+                Console.WriteLine($"Current Cache Size: {FormatBytes(GetCurrentInstanceCacheSize())}");
+                Console.WriteLine($"Current Cache Path: {_requestContextManager?.GetBaseCachePath()}");
 
-                    if (prevButton != null) prevButton.IsEnabled = browser.CanGoBack;
-                    if (nextButton != null) nextButton.IsEnabled = browser.CanGoForward;
-                    if (reloadButton != null) reloadButton.IsEnabled = true;
-                    if (goButton != null) goButton.IsEnabled = true;
-                }
-                else
+                Console.WriteLine("\nAll Instances:");
+                var instances = GetAllInstancesInfo();
+                foreach (var instance in instances)
                 {
-                    // ブラウザがない場合は全てのボタンを無効化
-                    var prevButton = this.FindName("PrevButton") as Button;
-                    var nextButton = this.FindName("NextButton") as Button;
-                    var reloadButton = this.FindName("ReloadButton") as Button;
-                    var goButton = this.FindName("GoButton") as Button;
-
-                    if (prevButton != null) prevButton.IsEnabled = false;
-                    if (nextButton != null) nextButton.IsEnabled = false;
-                    if (reloadButton != null) reloadButton.IsEnabled = false;
-                    if (goButton != null) goButton.IsEnabled = false;
+                    Console.WriteLine($"  {instance}");
                 }
+                Console.WriteLine("================================");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"UpdateButtonStates error: {ex.Message}");
+                Console.WriteLine($"ShowInstanceManagementInfo error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// バイト数を人間が読みやすい形式にフォーマット
+        /// </summary>
+        /// <param name="bytes">バイト数</param>
+        /// <returns>フォーマットされた文字列</returns>
+        private string FormatBytes(long bytes)
+        {
+            if (bytes < 1024)
+                return $"{bytes} B";
+            else if (bytes < 1024 * 1024)
+                return $"{bytes / 1024.0:F1} KB";
+            else if (bytes < 1024 * 1024 * 1024)
+                return $"{bytes / (1024.0 * 1024.0):F1} MB";
+            else
+                return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
+        }
+
+        /// <summary>
+        /// インスタンス管理ウィンドウを表示（将来の拡張用）
+        /// </summary>
+        public void ShowInstanceManagementWindow()
+        {
+            try
+            {
+                // TODO: インスタンス管理専用ウィンドウを実装
+                ShowInstanceManagementInfo();
+                UpdateStatus("インスタンス管理情報をコンソールに出力しました");
+            }
+            catch (Exception ex)
+            {
+                UpdateStatus($"インスタンス管理ウィンドウの表示に失敗しました: {ex.Message}");
             }
         }
 
         #endregion
+
+        #region Window終了処理
 
         protected override void OnClosed(EventArgs e)
         {
@@ -1283,5 +1420,7 @@ namespace CefSharp.fastBOT
                 base.OnClosed(e);
             }
         }
+
+        #endregion
     }
 }

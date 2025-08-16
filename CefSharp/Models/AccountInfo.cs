@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 namespace CefSharp.fastBOT.Models
 {
     /// <summary>
-    /// アカウント情報を格納するクラス
+    /// アカウント情報を格納するクラス（改良版）
     /// </summary>
     public class AccountInfo : INotifyPropertyChanged
     {
@@ -25,6 +25,11 @@ namespace CefSharp.fastBOT.Models
         /// アカウントID（一意識別子）
         /// </summary>
         public string Id { get; set; } = Guid.NewGuid().ToString();
+
+        /// <summary>
+        /// アカウント番号（1-10の固定番号）
+        /// </summary>
+        public int AccountNumber { get; set; } = 1;
 
         /// <summary>
         /// アカウント名（識別用）
@@ -189,6 +194,93 @@ namespace CefSharp.fastBOT.Models
         }
 
         /// <summary>
+        /// 全データをクリア（アカウント番号とIDは保持）
+        /// </summary>
+        public void ClearAllData()
+        {
+            // ログイン情報をクリア
+            LoginId = string.Empty;
+            Password = string.Empty;
+
+            // ネットワーク設定をクリア
+            ProxyHost = "127.0.0.1";
+            ProxyPort = 8080;
+            ProxyUsername = string.Empty;
+            ProxyPassword = string.Empty;
+            UseProxyRotation = false;
+            RotationPerRequest = true;
+            RotationIntervalSeconds = 30;
+
+            // 購入者情報をクリア
+            LastName = string.Empty;
+            FirstName = string.Empty;
+            LastKana = string.Empty;
+            FirstKana = string.Empty;
+            Tel1 = string.Empty;
+            Tel2 = string.Empty;
+            Tel3 = string.Empty;
+            Email = string.Empty;
+
+            // クレジットカード情報をクリア
+            CardNumber = string.Empty;
+            Cvv = string.Empty;
+            ExpiryMonth = string.Empty;
+            ExpiryYear = string.Empty;
+            CardName = string.Empty;
+
+            // 複合オブジェクトもクリア
+            Purchaser = new PurchaserInfo();
+            CreditCard = new CreditCardInfo();
+
+            // 備考をクリア
+            Notes = string.Empty;
+
+            // アカウント名をデフォルトに戻す
+            AccountName = $"アカウント{AccountNumber}";
+
+            UpdatedAt = DateTime.Now;
+        }
+
+        /// <summary>
+        /// データが設定されているかチェック
+        /// </summary>
+        /// <returns>ログイン情報が設定されている場合true</returns>
+        public bool HasData()
+        {
+            return !string.IsNullOrEmpty(LoginId) || !string.IsNullOrEmpty(Password) ||
+                   !string.IsNullOrEmpty(LastName) || !string.IsNullOrEmpty(Email);
+        }
+
+        /// <summary>
+        /// ログイン情報が完全かチェック
+        /// </summary>
+        /// <returns>ログインIDとパスワードが両方設定されている場合true</returns>
+        public bool HasCompleteLoginInfo()
+        {
+            return !string.IsNullOrEmpty(LoginId) && !string.IsNullOrEmpty(Password);
+        }
+
+        /// <summary>
+        /// 購入者情報が完全かチェック
+        /// </summary>
+        /// <returns>必要な購入者情報が設定されている場合true</returns>
+        public bool HasCompletePurchaserInfo()
+        {
+            return !string.IsNullOrEmpty(LastName) && !string.IsNullOrEmpty(FirstName) &&
+                   !string.IsNullOrEmpty(Email);
+        }
+
+        /// <summary>
+        /// クレジットカード情報が完全かチェック
+        /// </summary>
+        /// <returns>必要なクレジットカード情報が設定されている場合true</returns>
+        public bool HasCompleteCreditCardInfo()
+        {
+            return !string.IsNullOrEmpty(CardNumber) && !string.IsNullOrEmpty(Cvv) &&
+                   !string.IsNullOrEmpty(ExpiryMonth) && !string.IsNullOrEmpty(ExpiryYear);
+        }
+
+        /// <summary>
         /// アカウント情報の複製を作成
         /// </summary>
         /// <returns>複製されたアカウント情報</returns>
@@ -197,6 +289,7 @@ namespace CefSharp.fastBOT.Models
             return new AccountInfo
             {
                 Id = Guid.NewGuid().ToString(), // 新しいIDを生成
+                AccountNumber = this.AccountNumber,
                 AccountName = this.AccountName,
                 LoginId = this.LoginId,
                 Password = this.Password,
@@ -235,12 +328,31 @@ namespace CefSharp.fastBOT.Models
         /// <returns>表示用文字列</returns>
         public override string ToString()
         {
-            if (string.IsNullOrEmpty(AccountName))
-                return "未設定";
-
             var status = IsActive ? "" : " (無効)";
-            var hasLogin = !string.IsNullOrEmpty(LoginId) ? " ●" : " ○";
-            return $"{AccountName}{hasLogin}{status}";
+            var hasLogin = HasCompleteLoginInfo() ? " ●" : " ○";
+            var hasData = HasData() ? "" : " (未設定)";
+
+            return $"アカウント{AccountNumber}{hasLogin}{hasData}{status}";
+        }
+
+        /// <summary>
+        /// コンボボックス表示用の文字列を取得
+        /// </summary>
+        /// <returns>コンボボックス表示用文字列</returns>
+        public string GetDisplayText()
+        {
+            if (HasCompleteLoginInfo())
+            {
+                return $"アカウント{AccountNumber} - {LoginId}";
+            }
+            else if (HasData())
+            {
+                return $"アカウント{AccountNumber} - 設定中";
+            }
+            else
+            {
+                return $"アカウント{AccountNumber} - 未設定";
+            }
         }
     }
 

@@ -15,7 +15,6 @@ namespace CefSharp.fastBOT
     {
         // 各種マネージャー
         private ProxyManager _proxyManager;
-        private UserSettings _userSettings;
         private AutomationService _automationService;
         private HtmlExtractionService _htmlService;
         private AccountManager _accountManager;
@@ -48,7 +47,6 @@ namespace CefSharp.fastBOT
             try
             {
                 _proxyManager = new ProxyManager();
-                _userSettings = new UserSettings();
                 _accountManager = new AccountManager();
 
                 // Proxyローテーションタイマー

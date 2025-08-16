@@ -24,7 +24,6 @@ namespace CefSharp.fastBOT
         // ブラウザ関連マネージャー
         private RequestContextManager _requestContextManager;
         private BrowserTabManager _tabManager;
-        private UserSettings _userSettings;
 
         public MainWindow()
         {
@@ -69,7 +68,6 @@ namespace CefSharp.fastBOT
             {
                 _requestContextManager = new RequestContextManager();
                 _tabManager = new BrowserTabManager(TabWidget);
-                _userSettings = new UserSettings();
 
                 // BrowserTabManagerからのURL変更イベントを購読
                 _tabManager.OnCurrentUrlChanged += TabManager_OnCurrentUrlChanged;

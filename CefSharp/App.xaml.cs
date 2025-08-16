@@ -10,37 +10,42 @@ using CefSharp.fastBOT.Utils;
 namespace CefSharp.fastBOT
 {
     /// <summary>
-    /// App.xaml の相互作用ロジック（修正版）
-    /// インスタンス番号ベースのプロセス分離キャッシュ管理
+    /// App.xaml の相互作用ロジック（動作確認済み版）
+    /// プロセス分離 + ブラウザ表示の両立
     /// </summary>
     public partial class App : Application
     {
+        private static int _currentInstanceNumber = 0;
+
         public App()
         {
             InitializeCefSharp();
         }
 
         /// <summary>
-        /// CefSharpを初期化（プロセス毎のキャッシュ管理版）
+        /// CefSharpを初期化（動作確認済み設定）
         /// </summary>
         private void InitializeCefSharp()
         {
             try
             {
-                Console.WriteLine("=== CefSharp Initialization Start (Process-Separated Cache) ===");
+                Console.WriteLine("=== CefSharp Initialization Start (Working Version) ===");
 
                 // 起動順に基づくインスタンス番号を取得
-                var instanceNumber = GetNextAvailableInstanceNumber();
+                _currentInstanceNumber = GetNextAvailableInstanceNumber();
 
-                Console.WriteLine($"Instance number: {instanceNumber}");
+                Console.WriteLine($"Instance number: {_currentInstanceNumber}");
 
                 var settings = new CefSettings();
 
                 // インスタンス番号毎のキャッシュパス設定
                 string cachePath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT", "Instance", instanceNumber.ToString()
+                    "fastBOT", "Instance", _currentInstanceNumber.ToString()
                 );
+
+                // ディレクトリを確実に作成
+                Directory.CreateDirectory(cachePath);
                 settings.CachePath = cachePath;
 
                 // インスタンス毎のログファイル設定
@@ -51,29 +56,27 @@ namespace CefSharp.fastBOT
                 settings.AcceptLanguageList = "ja-JP,ja,en-US,en";
                 settings.UserAgent = UserAgentHelper.GetChromeUserAgent();
 
-                // パフォーマンス設定（最小限）
+                // 必要最小限のコマンドライン引数のみ設定
                 settings.CefCommandLineArgs.Add("--disable-gpu-vsync");
                 settings.CefCommandLineArgs.Add("--max_old_space_size", "4096");
-
-                // 安定性を重視した設定
                 settings.CefCommandLineArgs.Add("--disable-gpu-compositing");
                 settings.CefCommandLineArgs.Add("--disable-features", "VizDisplayCompositor");
 
-                // GCM関連のエラーを抑制
+                // GCM関連のエラーを抑制（動作に影響しない）
                 settings.CefCommandLineArgs.Add("--disable-background-networking");
                 settings.CefCommandLineArgs.Add("--disable-background-timer-throttling");
                 settings.CefCommandLineArgs.Add("--disable-backgrounding-occluded-windows");
                 settings.CefCommandLineArgs.Add("--disable-renderer-backgrounding");
 
-                // その他の不要な機能を無効化
+                // 軽量化（動作に影響しない）
                 settings.CefCommandLineArgs.Add("--disable-extensions");
                 settings.CefCommandLineArgs.Add("--disable-plugins");
                 settings.CefCommandLineArgs.Add("--disable-print-preview");
 
 #if DEBUG
-                settings.RemoteDebuggingPort = 8088 + instanceNumber; // インスタンス毎に異なるポート
+                settings.RemoteDebuggingPort = 8088 + _currentInstanceNumber;
                 settings.LogSeverity = LogSeverity.Info;
-                Console.WriteLine($"Debug mode - Remote debugging enabled on port {8088 + instanceNumber}");
+                Console.WriteLine($"Debug mode - Remote debugging enabled on port {8088 + _currentInstanceNumber}");
 #else
                 settings.LogSeverity = LogSeverity.Error;
 #endif
@@ -82,7 +85,7 @@ namespace CefSharp.fastBOT
                 Console.WriteLine($"UserAgent: {settings.UserAgent}");
 
                 // インスタンスロックファイルを作成
-                CreateInstanceLockFile(instanceNumber);
+                CreateInstanceLockFile(_currentInstanceNumber, cachePath);
 
                 // CefSharp初期化前の状態チェック
                 Console.WriteLine($"Before initialization - Cef.IsInitialized: {Cef.IsInitialized}");
@@ -147,6 +150,8 @@ namespace CefSharp.fastBOT
                     var instanceDirectories = Directory.GetDirectories(baseDirectory)
                         .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
                         .ToList();
+
+                    Console.WriteLine($"Found {instanceDirectories.Count} existing instance directories");
 
                     foreach (var dir in instanceDirectories)
                     {
@@ -224,18 +229,12 @@ namespace CefSharp.fastBOT
         /// インスタンスロックファイルを作成
         /// </summary>
         /// <param name="instanceNumber">インスタンス番号</param>
-        private void CreateInstanceLockFile(int instanceNumber)
+        /// <param name="cachePath">キャッシュパス</param>
+        private void CreateInstanceLockFile(int instanceNumber, string cachePath)
         {
             try
             {
-                var instanceDirectory = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT", "Instance", instanceNumber.ToString()
-                );
-
-                Directory.CreateDirectory(instanceDirectory);
-
-                var lockFile = Path.Combine(instanceDirectory, "instance.lock");
+                var lockFile = Path.Combine(cachePath, "instance.lock");
                 var currentProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
 
                 File.WriteAllText(lockFile, currentProcessId.ToString());
@@ -271,10 +270,21 @@ namespace CefSharp.fastBOT
             }
         }
 
+        /// <summary>
+        /// 現在のインスタンス番号を取得
+        /// </summary>
+        /// <returns>インスタンス番号</returns>
+        public static int GetCurrentInstanceNumber()
+        {
+            return _currentInstanceNumber;
+        }
+
         protected override void OnExit(ExitEventArgs e)
         {
             try
             {
+                Console.WriteLine($"Application exiting - Instance {_currentInstanceNumber}");
+
                 if (Cef.IsInitialized == true)
                 {
                     Cef.Shutdown();

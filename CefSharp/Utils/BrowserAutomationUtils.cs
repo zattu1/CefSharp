@@ -39,7 +39,7 @@ namespace CefSharp.fastBOT.Utils
         #region Cookie操作
 
         /// <summary>
-        /// 指定URLのCookieを取得
+        /// 指定URLのCookieを取得（適切な非同期処理版）
         /// </summary>
         /// <param name="url">対象URL</param>
         /// <param name="cookieName">Cookie名（nullの場合は全て取得）</param>
@@ -62,8 +62,8 @@ namespace CefSharp.fastBOT.Utils
                     cookieManager.VisitUrlCookies(url, true, visitor);
                 }
 
-                // 非同期処理の完了を待機（簡易実装）
-                await Task.Delay(500);
+                // 適切に完了を待機
+                await visitor.WaitForCompletion();
 
                 return visitor.Cookies.FindAll(c =>
                     string.IsNullOrEmpty(cookieName) || c.Name.Equals(cookieName, StringComparison.OrdinalIgnoreCase));
@@ -75,6 +75,53 @@ namespace CefSharp.fastBOT.Utils
             }
         }
 
+        /// <summary>
+        /// Cookie収集用のビジター（適切な完了通知付き）
+        /// </summary>
+        public class CookieCollector : ICookieVisitor
+        {
+            private readonly TaskCompletionSource<bool> _completionSource = new TaskCompletionSource<bool>();
+            private int _expectedCount = -1;
+            private int _visitedCount = 0;
+
+            public List<Cookie> Cookies { get; } = new List<Cookie>();
+
+            public bool Visit(Cookie cookie, int count, int total, ref bool deleteCookie)
+            {
+                Cookies.Add(cookie);
+                deleteCookie = false;
+
+                _visitedCount = count;
+
+                // 初回でtotal数を記録
+                if (_expectedCount == -1)
+                {
+                    _expectedCount = total;
+                }
+
+                // すべてのCookieを訪問完了した場合
+                if (count == total)
+                {
+                    _completionSource.TrySetResult(true);
+                }
+
+                return true;
+            }
+
+            /// <summary>
+            /// Cookie収集の完了を待機
+            /// </summary>
+            public Task WaitForCompletion()
+            {
+                return _completionSource.Task;
+            }
+
+            public void Dispose()
+            {
+                // 念のため完了をセット
+                _completionSource.TrySetResult(true);
+            }
+        }
         /// <summary>
         /// Cookieを更新・設定
         /// </summary>

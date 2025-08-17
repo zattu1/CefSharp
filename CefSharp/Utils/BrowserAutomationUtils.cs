@@ -4,35 +4,40 @@ using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Threading;
 using CefSharp;
 using CefSharp.Wpf;
 
 namespace CefSharp.fastBOT.Utils
 {
     /// <summary>
-    /// ブラウザ自動化のためのユーティリティクラス
+    /// ブラウザ自動化のためのユーティリティクラス（CefSharpネイティブAPI対応版）
     /// </summary>
     public class BrowserAutomationUtils
     {
         #region Win32 API定義
 
         [DllImport("user32.dll")]
-        private static extern bool SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+        private static extern IntPtr ChildWindowFromPoint(IntPtr hWndParent, POINT Point);
 
         [DllImport("user32.dll")]
-        private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT
+        {
+            public int X;
+            public int Y;
+        }
 
-        // Windows Message定数
-        private const uint WM_LBUTTONDOWN = 0x0201;
-        private const uint WM_LBUTTONUP = 0x0202;
-        private const uint WM_RBUTTONDOWN = 0x0204;
-        private const uint WM_RBUTTONUP = 0x0205;
-        private const uint WM_KEYDOWN = 0x0100;
-        private const uint WM_KEYUP = 0x0101;
-        private const uint WM_CHAR = 0x0102;
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
 
         #endregion
 
@@ -53,16 +58,13 @@ namespace CefSharp.fastBOT.Utils
 
                 if (string.IsNullOrEmpty(cookieName))
                 {
-                    // 全Cookieを訪問
                     cookieManager.VisitAllCookies(visitor);
                 }
                 else
                 {
-                    // 特定URLのCookieを訪問
                     cookieManager.VisitUrlCookies(url, true, visitor);
                 }
 
-                // 適切に完了を待機
                 await visitor.WaitForCompletion();
 
                 return visitor.Cookies.FindAll(c =>
@@ -74,6 +76,347 @@ namespace CefSharp.fastBOT.Utils
                 return new List<Cookie>();
             }
         }
+
+        /// <summary>
+        /// Cookie更新・設定
+        /// </summary>
+        public static bool UpdateCookieAsync(string url, string name, string value,
+            string domain = null, string path = "/", bool httpOnly = false, bool secure = false)
+        {
+            try
+            {
+                var cookieManager = Cef.GetGlobalCookieManager();
+                var uri = new Uri(url);
+
+                var cookie = new Cookie
+                {
+                    Name = name,
+                    Value = value,
+                    Domain = domain ?? uri.Host,
+                    Path = path,
+                    HttpOnly = httpOnly,
+                    Secure = secure,
+                    Expires = DateTime.Now.AddYears(1)
+                };
+
+                return cookieManager.SetCookie(url, cookie);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Cookie更新エラー: {ex.Message}");
+                return false;
+            }
+        }
+
+        #endregion
+
+        #region HTML操作
+
+        /// <summary>
+        /// HTMLデータをブラウザに反映
+        /// </summary>
+        public static async Task LoadHtmlAsync(ChromiumWebBrowser browser, string html, string url = "about:blank")
+        {
+            try
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    browser.LoadHtml(html, url);
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"HTML読み込みエラー: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// JavaScriptを実行してHTML要素を操作
+        /// </summary>
+        public static async Task<object> ExecuteScriptAsync(ChromiumWebBrowser browser, string script)
+        {
+            try
+            {
+                var response = await browser.EvaluateScriptAsync(script);
+                return response.Success ? response.Result : null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"JavaScript実行エラー: {ex.Message}");
+                return null;
+            }
+        }
+
+        #endregion
+
+        #region CefSharpネイティブAPI操作（元のI/F維持）
+
+        /// <summary>
+        /// 指定座標をマウスクリック（C++のleftMouseClickを参考）
+        /// </summary>
+        /// <param name="browser">対象ブラウザ</param>
+        /// <param name="x">X座標</param>
+        /// <param name="y">Y座標</param>
+        /// <param name="downUpFlag">クリック種別フラグ（3=通常クリック）</param>
+        public static bool LeftMouseClick(ChromiumWebBrowser browser, int x, int y, int downUpFlag = 3)
+        {
+            try
+            {
+                // ブラウザがロード済みかチェック
+                if (browser?.GetBrowser() == null)
+                {
+                    Console.WriteLine("LeftMouseClick: ブラウザが初期化されていません");
+                    return false;
+                }
+
+                var host = browser.GetBrowser().GetHost();
+                if (host == null)
+                {
+                    Console.WriteLine("LeftMouseClick: ブラウザホストが取得できません");
+                    return false;
+                }
+
+                Console.WriteLine($"LeftMouseClick: 座標({x}, {y}) でクリック実行, フラグ={downUpFlag}");
+
+                // フォーカスを確保
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    browser.Focus();
+                });
+                host.SetFocus(true);
+
+                // マウス移動
+                host.SendMouseMoveEvent(x, y, false, CefEventFlags.None);
+                Thread.Sleep(50);
+
+                // C++のdownUpFlagに従った処理
+                if ((downUpFlag & 1) != 0) // ダウン
+                {
+                    host.SendMouseClickEvent(x, y, MouseButtonType.Left, false, 1, CefEventFlags.None);
+                    Console.WriteLine("LeftMouseClick: ダウン実行");
+                }
+
+                if ((downUpFlag & 2) != 0) // アップ
+                {
+                    // 少し待機してからアップ（C++のmsleep(200)を参考）
+                    Thread.Sleep(200);
+                    host.SendMouseClickEvent(x, y, MouseButtonType.Left, true, 1, CefEventFlags.None);
+                    Console.WriteLine("LeftMouseClick: アップ実行");
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"LeftMouseClick エラー: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 仮想キーボード入力（C++のvirtualKeyboardを参考）
+        /// </summary>
+        /// <param name="browser">対象ブラウザ</param>
+        /// <param name="x">クリック座標X</param>
+        /// <param name="y">クリック座標Y</param>
+        /// <param name="text">入力テキスト</param>
+        public static bool VirtualKeyboard(ChromiumWebBrowser browser, int x, int y, string text)
+        {
+            try
+            {
+                // ブラウザがロード済みかチェック
+                if (browser?.GetBrowser() == null)
+                {
+                    Console.WriteLine("VirtualKeyboard: ブラウザが初期化されていません");
+                    return false;
+                }
+
+                var host = browser.GetBrowser().GetHost();
+                if (host == null)
+                {
+                    Console.WriteLine("VirtualKeyboard: ブラウザホストが取得できません");
+                    return false;
+                }
+
+                Console.WriteLine($"VirtualKeyboard: クリック座標=({x}, {y}), テキスト='{text}'");
+
+                // フォーカスを確保
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    browser.Focus();
+                });
+                host.SetFocus(true);
+
+                // まずクリックしてフォーカスを当てる
+                host.SendMouseMoveEvent(x, y, false, CefEventFlags.None);
+                Thread.Sleep(50);
+                host.SendMouseClickEvent(x, y, MouseButtonType.Left, false, 1, CefEventFlags.None);
+                Thread.Sleep(100);
+                host.SendMouseClickEvent(x, y, MouseButtonType.Left, true, 1, CefEventFlags.None);
+
+                // 少し待機してからテキスト入力
+                Thread.Sleep(100);
+
+                // テキストを1文字ずつ送信（C++版と同様）
+                foreach (char c in text)
+                {
+                    Console.WriteLine($"Sending character: {c}");
+
+                    var keyEvent = new KeyEvent
+                    {
+                        WindowsKeyCode = c,
+                        Type = KeyEventType.Char,
+                        Modifiers = CefEventFlags.None
+                    };
+
+                    host.SendKeyEvent(keyEvent);
+
+                    // C++のmsleep(50)を参考
+                    Thread.Sleep(50);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"VirtualKeyboard エラー: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 仮想キーコード送信（C++のvirtualKeyCodeを参考）
+        /// </summary>
+        /// <param name="browser">対象ブラウザ</param>
+        /// <param name="x">クリック座標X</param>
+        /// <param name="y">クリック座標Y</param>
+        /// <param name="keyCode">仮想キーコード</param>
+        public static bool VirtualKeyCode(ChromiumWebBrowser browser, int x, int y, int keyCode)
+        {
+            try
+            {
+                // ブラウザがロード済みかチェック
+                if (browser?.GetBrowser() == null) return false;
+
+                var host = browser.GetBrowser().GetHost();
+                if (host == null) return false;
+
+                Console.WriteLine($"VirtualKeyCode: クリック座標=({x}, {y}), キーコード={keyCode}");
+
+                // フォーカスを確保
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    browser.Focus();
+                });
+                host.SetFocus(true);
+
+                // まずクリックしてフォーカスを当てる
+                host.SendMouseMoveEvent(x, y, false, CefEventFlags.None);
+                Thread.Sleep(50);
+                host.SendMouseClickEvent(x, y, MouseButtonType.Left, false, 1, CefEventFlags.None);
+                host.SendMouseClickEvent(x, y, MouseButtonType.Left, true, 1, CefEventFlags.None);
+
+                // キーコードを送信
+                var keyEventDown = new KeyEvent
+                {
+                    WindowsKeyCode = keyCode,
+                    Type = KeyEventType.KeyDown,
+                    Modifiers = CefEventFlags.None
+                };
+                host.SendKeyEvent(keyEventDown);
+
+                var keyEventUp = new KeyEvent
+                {
+                    WindowsKeyCode = keyCode,
+                    Type = KeyEventType.KeyUp,
+                    Modifiers = CefEventFlags.None
+                };
+                host.SendKeyEvent(keyEventUp);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"VirtualKeyCode エラー: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// C++のChildWindowFromPointと同等の処理でターゲットウィンドウを探す（互換性維持用）
+        /// </summary>
+        /// <param name="parentHwnd">親ウィンドウハンドル</param>
+        /// <param name="point">座標</param>
+        /// <returns>ターゲットウィンドウハンドル</returns>
+        private static IntPtr FindTargetWindow(IntPtr parentHwnd, POINT point)
+        {
+            IntPtr currentHwnd = parentHwnd;
+
+            while (true)
+            {
+                IntPtr nextHwnd = ChildWindowFromPoint(currentHwnd, point);
+                if (nextHwnd == IntPtr.Zero || nextHwnd == currentHwnd)
+                {
+                    return currentHwnd;
+                }
+                currentHwnd = nextHwnd;
+            }
+        }
+
+        /// <summary>
+        /// ブラウザのウィンドウハンドルを取得
+        /// </summary>
+        /// <param name="browser">対象ブラウザ</param>
+        /// <returns>ウィンドウハンドル</returns>
+        private static IntPtr GetBrowserHandle(ChromiumWebBrowser browser)
+        {
+            try
+            {
+                return Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var hwndSource = PresentationSource.FromVisual(browser) as HwndSource;
+                    return hwndSource?.Handle ?? IntPtr.Zero;
+                });
+            }
+            catch
+            {
+                return IntPtr.Zero;
+            }
+        }
+
+        #endregion
+
+        #region 既存の互換性メソッド
+
+        /// <summary>
+        /// 既存のマウスクリック（互換性のため残す）
+        /// </summary>
+        public static bool SendMouseClick(ChromiumWebBrowser browser, int x, int y, bool isRightClick = false)
+        {
+            return LeftMouseClick(browser, x, y, 3); // 通常のクリック
+        }
+
+        /// <summary>
+        /// 既存のキーボード入力（互換性のため残す）
+        /// </summary>
+        public static bool SendKeyboardInput(ChromiumWebBrowser browser, string text)
+        {
+            // 画面中央を仮の座標として使用
+            return VirtualKeyboard(browser, 500, 300, text);
+        }
+
+        /// <summary>
+        /// 既存のキーコード送信（互換性のため残す）
+        /// </summary>
+        public static bool SendKeyCode(ChromiumWebBrowser browser, int keyCode, bool isKeyDown = true)
+        {
+            // 画面中央を仮の座標として使用
+            return VirtualKeyCode(browser, 500, 300, keyCode);
+        }
+
+        #endregion
+
+        #region Cookie収集クラス
 
         /// <summary>
         /// Cookie収集用のビジター（適切な完了通知付き）
@@ -122,222 +465,7 @@ namespace CefSharp.fastBOT.Utils
                 _completionSource.TrySetResult(true);
             }
         }
-        /// <summary>
-        /// Cookieを更新・設定
-        /// </summary>
-        /// <param name="url">対象URL</param>
-        /// <param name="name">Cookie名</param>
-        /// <param name="value">Cookie値</param>
-        /// <param name="domain">ドメイン</param>
-        /// <param name="path">パス</param>
-        /// <param name="httpOnly">HttpOnlyフラグ</param>
-        /// <param name="secure">Secureフラグ</param>
-        /// <returns>設定成功/失敗</returns>
-        public static bool UpdateCookieAsync(string url, string name, string value,
-            string domain = null, string path = "/", bool httpOnly = false, bool secure = false)
-        {
-            try
-            {
-                var cookieManager = Cef.GetGlobalCookieManager();
-                var uri = new Uri(url);
-
-                var cookie = new Cookie
-                {
-                    Name = name,
-                    Value = value,
-                    Domain = domain ?? uri.Host,
-                    Path = path,
-                    HttpOnly = httpOnly,
-                    Secure = secure,
-                    Expires = DateTime.Now.AddYears(1)
-                };
-
-                return cookieManager.SetCookie(url, cookie);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Cookie更新エラー: {ex.Message}");
-                return false;
-            }
-        }
 
         #endregion
-
-        #region HTML操作
-
-        /// <summary>
-        /// HTMLデータをブラウザに反映
-        /// </summary>
-        /// <param name="browser">対象ブラウザ</param>
-        /// <param name="html">HTMLデータ</param>
-        /// <param name="url">ベースURL</param>
-        public static async Task LoadHtmlAsync(ChromiumWebBrowser browser, string html, string url = "about:blank")
-        {
-            try
-            {
-                await Application.Current.Dispatcher.InvokeAsync(() =>
-                {
-                    browser.LoadHtml(html, url);
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"HTML読み込みエラー: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// JavaScriptを実行してHTML要素を操作
-        /// </summary>
-        /// <param name="browser">対象ブラウザ</param>
-        /// <param name="script">JavaScriptコード</param>
-        /// <returns>実行結果</returns>
-        public static async Task<object> ExecuteScriptAsync(ChromiumWebBrowser browser, string script)
-        {
-            try
-            {
-                var response = await browser.EvaluateScriptAsync(script);
-                return response.Success ? response.Result : null;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"JavaScript実行エラー: {ex.Message}");
-                return null;
-            }
-        }
-
-        #endregion
-
-        #region ウィンドウメッセージ操作
-
-        /// <summary>
-        /// ブラウザ画面をマウスクリック
-        /// </summary>
-        /// <param name="browser">対象ブラウザ</param>
-        /// <param name="x">X座標</param>
-        /// <param name="y">Y座標</param>
-        /// <param name="isRightClick">右クリックかどうか</param>
-        public static bool SendMouseClick(ChromiumWebBrowser browser, int x, int y, bool isRightClick = false)
-        {
-            try
-            {
-                var hwnd = GetBrowserHandle(browser);
-                if (hwnd == IntPtr.Zero) return false;
-
-                var lParam = (IntPtr)((y << 16) | x);
-
-                if (isRightClick)
-                {
-                    PostMessage(hwnd, WM_RBUTTONDOWN, IntPtr.Zero, lParam);
-                    PostMessage(hwnd, WM_RBUTTONUP, IntPtr.Zero, lParam);
-                }
-                else
-                {
-                    PostMessage(hwnd, WM_LBUTTONDOWN, IntPtr.Zero, lParam);
-                    PostMessage(hwnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"マウスクリックエラー: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// キーボード入力のウィンドウメッセージを送信
-        /// </summary>
-        /// <param name="browser">対象ブラウザ</param>
-        /// <param name="text">入力テキスト</param>
-        public static bool SendKeyboardInput(ChromiumWebBrowser browser, string text)
-        {
-            try
-            {
-                var hwnd = GetBrowserHandle(browser);
-                if (hwnd == IntPtr.Zero) return false;
-
-                foreach (char c in text)
-                {
-                    PostMessage(hwnd, WM_CHAR, (IntPtr)c, IntPtr.Zero);
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"キーボード入力エラー: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// キーコードのウィンドウメッセージを送信
-        /// </summary>
-        /// <param name="browser">対象ブラウザ</param>
-        /// <param name="keyCode">仮想キーコード</param>
-        /// <param name="isKeyDown">キーダウンかどうか</param>
-        public static bool SendKeyCode(ChromiumWebBrowser browser, int keyCode, bool isKeyDown = true)
-        {
-            try
-            {
-                var hwnd = GetBrowserHandle(browser);
-                if (hwnd == IntPtr.Zero) return false;
-
-                uint message = isKeyDown ? WM_KEYDOWN : WM_KEYUP;
-                PostMessage(hwnd, message, (IntPtr)keyCode, IntPtr.Zero);
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"キーコード送信エラー: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// ブラウザのウィンドウハンドルを取得
-        /// </summary>
-        /// <param name="browser">対象ブラウザ</param>
-        /// <returns>ウィンドウハンドル</returns>
-        private static IntPtr GetBrowserHandle(ChromiumWebBrowser browser)
-        {
-            try
-            {
-                return Application.Current.Dispatcher.Invoke(() =>
-                {
-                    var hwndSource = PresentationSource.FromVisual(browser) as HwndSource;
-                    return hwndSource?.Handle ?? IntPtr.Zero;
-                });
-            }
-            catch
-            {
-                return IntPtr.Zero;
-            }
-        }
-
-        #endregion
-    }
-
-    /// <summary>
-    /// Cookie収集用のビジター
-    /// </summary>
-    public class CookieCollector : ICookieVisitor
-    {
-        public List<Cookie> Cookies { get; } = new List<Cookie>();
-
-        public bool Visit(Cookie cookie, int count, int total, ref bool deleteCookie)
-        {
-            Cookies.Add(cookie);
-            deleteCookie = false;
-            return true;
-        }
-
-        public void Dispose()
-        {
-            // リソースのクリーンアップが必要な場合はここで実装
-        }
     }
 }

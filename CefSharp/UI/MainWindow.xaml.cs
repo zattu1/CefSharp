@@ -212,6 +212,9 @@ namespace CefSharp.fastBOT.UI
                     // ブラウザイベントの設定
                     SetupBrowserEvents(tab.Browser);
 
+                    // 初期ウィンドウタイトルを設定
+                    UpdateWindowTitle();
+
                     // AutoPurchaseControlにブラウザサービスを設定
                     if (AutoPurchaseControlPanel != null)
                     {
@@ -258,6 +261,13 @@ namespace CefSharp.fastBOT.UI
             browser.TitleChanged += (sender, args) =>
             {
                 Console.WriteLine($"Page title changed: {args.NewValue}");
+
+                // 現在のアクティブタブのブラウザの場合のみウィンドウタイトルを更新
+                var currentBrowser = _tabManager?.GetCurrentBrowser();
+                if (sender == currentBrowser)
+                {
+                    UpdateWindowTitle(args.NewValue?.ToString());
+                }
             };
 
             // 読み込み状態変更イベント
@@ -404,6 +414,21 @@ namespace CefSharp.fastBOT.UI
                 {
                     UpdateUrlLineEdit(newUrl);
                     UpdateButtonStates(); // タブ切り替え時にもボタン状態を更新
+
+                    // タブ切り替え時にウィンドウタイトルも更新
+                    var currentTab = _tabManager?.GetCurrentTab();
+                    if (currentTab?.Browser != null)
+                    {
+                        var pageTitle = currentTab.OriginalTitle;
+                        if (pageTitle != "読み込み中..." && pageTitle != "新しいタブ")
+                        {
+                            UpdateWindowTitle(pageTitle);
+                        }
+                        else
+                        {
+                            UpdateWindowTitle();
+                        }
+                    }
                 }
                 else
                 {
@@ -411,6 +436,21 @@ namespace CefSharp.fastBOT.UI
                     {
                         UpdateUrlLineEdit(newUrl);
                         UpdateButtonStates();
+
+                        // タブ切り替え時にウィンドウタイトルも更新
+                        var currentTab = _tabManager?.GetCurrentTab();
+                        if (currentTab?.Browser != null)
+                        {
+                            var pageTitle = currentTab.OriginalTitle;
+                            if (pageTitle != "読み込み中..." && pageTitle != "新しいタブ")
+                            {
+                                UpdateWindowTitle(pageTitle);
+                            }
+                            else
+                            {
+                                UpdateWindowTitle();
+                            }
+                        }
                     });
                 }
             }
@@ -441,6 +481,38 @@ namespace CefSharp.fastBOT.UI
             catch (Exception ex)
             {
                 Console.WriteLine($"URL field update error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// ウィンドウタイトルを更新
+        /// </summary>
+        /// <param name="pageTitle">ページのタイトル</param>
+        private void UpdateWindowTitle(string pageTitle = null)
+        {
+            try
+            {
+                // UIスレッドでの実行を保証
+                if (!Application.Current.Dispatcher.CheckAccess())
+                {
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() => UpdateWindowTitle(pageTitle)));
+                    return;
+                }
+
+                const string baseTitle = "fastBOT自動購入";
+
+                if (!string.IsNullOrWhiteSpace(pageTitle))
+                {
+                    this.Title = $"{pageTitle} - {baseTitle}";
+                }
+                else
+                {
+                    this.Title = baseTitle;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"UpdateWindowTitle error: {ex.Message}");
             }
         }
 

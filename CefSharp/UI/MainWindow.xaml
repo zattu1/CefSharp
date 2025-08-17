@@ -4,7 +4,7 @@
         xmlns:cef="clr-namespace:CefSharp.Wpf;assembly=CefSharp.Wpf"
         xmlns:local="clr-namespace:CefSharp.fastBOT"
         xmlns:ui="clr-namespace:CefSharp.fastBOT.UI"
-        Title="fastBOT - チケット自動購入ブラウザ" 
+        Title="fastBOT自動購入" 
         Height="854" Width="1200"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Resources/fastBOT.ico">

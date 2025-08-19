@@ -14,7 +14,7 @@ using System.Windows;
 namespace CefSharp.fastBOT.Core
 {
     /// <summary>
-    /// ブラウザからHTMLコンテンツを取得・解析するサービス
+    /// ブラウザからHTMLコンテンツを取得・解析するサービス（スレッドセーフ対応版）
     /// CEFの機能とFizzler.Systems.HtmlAgilityPackを使用してHTMLの詳細な解析機能を提供
     /// </summary>
     public class HtmlExtractionService
@@ -22,6 +22,8 @@ namespace CefSharp.fastBOT.Core
         private readonly ChromiumWebBrowser _browser;
         private HtmlDocument _lastParsedDocument;
         private string _lastHtmlContent;
+        private readonly object _lockObject = new object();
+        private bool _disposed = false;
 
         public HtmlExtractionService(ChromiumWebBrowser browser)
         {
@@ -43,30 +45,51 @@ namespace CefSharp.fastBOT.Core
 
         #endregion
 
-        #region CEF直接取得メソッド
+        #region CEF直接取得メソッド（スレッドセーフ対応）
 
         /// <summary>
-        /// CEFから直接現在のページの完全なHTMLを取得
+        /// CEFから直接現在のページの完全なHTMLを取得（スレッドセーフ）
         /// </summary>
         /// <returns>HTMLコンテンツ</returns>
         public async Task<string> GetPageHtmlAsync()
         {
             try
             {
-                if (!_browser.IsBrowserInitialized)
+                // UIスレッドでブラウザの状態確認を実行
+                var (isInitialized, mainFrame) = await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        var initialized = _browser.IsBrowserInitialized;
+                        var frame = initialized ? _browser.GetMainFrame() : null;
+                        return (initialized, frame);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"UI thread browser check error: {ex.Message}");
+                        return (false, null);
+                    }
+                });
+
+                if (!isInitialized)
                 {
                     throw new InvalidOperationException("ブラウザが初期化されていません");
                 }
 
-                var mainFrame = _browser.GetMainFrame();
                 if (mainFrame == null)
                 {
                     throw new InvalidOperationException("メインフレームが取得できません");
                 }
 
                 // CEFのGetSourceAsyncメソッドを使用してHTMLソースを取得
-                _lastHtmlContent = await mainFrame.GetSourceAsync();
-                return _lastHtmlContent;
+                var html = await mainFrame.GetSourceAsync();
+
+                lock (_lockObject)
+                {
+                    _lastHtmlContent = html;
+                }
+
+                return html;
             }
             catch (Exception ex)
             {
@@ -76,7 +99,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// CEFから直接取得したHTMLからbody部分を抽出
+        /// CEFから直接取得したHTMLからbody部分を抽出（スレッドセーフ）
         /// </summary>
         /// <returns>body部分のHTMLコンテンツ</returns>
         public async Task<string> GetPageBodyHtmlAsync()
@@ -97,7 +120,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// CEFから取得したHTMLから指定したCSSセレクターの要素のHTMLを取得
+        /// CEFから取得したHTMLから指定したCSSセレクターの要素のHTMLを取得（スレッドセーフ）
         /// </summary>
         /// <param name="selector">CSSセレクター</param>
         /// <returns>要素のHTMLコンテンツ</returns>
@@ -130,7 +153,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// CEFから取得したHTMLから指定したCSSセレクターの要素の内部HTMLを取得
+        /// CEFから取得したHTMLから指定したCSSセレクターの要素の内部HTMLを取得（スレッドセーフ）
         /// </summary>
         /// <param name="selector">CSSセレクター</param>
         /// <returns>要素の内部HTMLコンテンツ</returns>
@@ -163,7 +186,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// CEFから取得したHTMLからテキストコンテンツを抽出
+        /// CEFから取得したHTMLからテキストコンテンツを抽出（スレッドセーフ）
         /// </summary>
         /// <returns>テキストコンテンツ</returns>
         public async Task<string> GetPageTextAsync()
@@ -184,14 +207,28 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// CEFから取得した情報とHTMLパースによりページの基本情報を取得
+        /// CEFから取得した情報とHTMLパースによりページの基本情報を取得（スレッドセーフ）
         /// </summary>
         /// <returns>ページ情報</returns>
         public async Task<PageInfo> GetPageInfoAsync()
         {
             try
             {
-                if (!_browser.IsBrowserInitialized)
+                // UIスレッドでブラウザ情報を取得
+                var (url, isInitialized) = await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        return (_browser.Address ?? string.Empty, _browser.IsBrowserInitialized);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Browser info retrieval error: {ex.Message}");
+                        return (string.Empty, false);
+                    }
+                });
+
+                if (!isInitialized)
                 {
                     throw new InvalidOperationException("ブラウザが初期化されていません");
                 }
@@ -201,7 +238,7 @@ namespace CefSharp.fastBOT.Core
 
                 var pageInfo = new PageInfo
                 {
-                    Url = _browser.Address ?? string.Empty,
+                    Url = url,
                     AnalyzedAt = DateTime.Now
                 };
 
@@ -245,10 +282,10 @@ namespace CefSharp.fastBOT.Core
 
         #endregion
 
-        #region HTMLパーサー機能（Fizzler使用）
+        #region HTMLパーサー機能（Fizzler使用・スレッドセーフ）
 
         /// <summary>
-        /// HTMLコンテンツをパースしてHtmlDocumentを返す
+        /// HTMLコンテンツをパースしてHtmlDocumentを返す（スレッドセーフ）
         /// </summary>
         /// <param name="htmlContent">HTMLコンテンツ</param>
         /// <returns>パース済みのHtmlDocument</returns>
@@ -260,7 +297,12 @@ namespace CefSharp.fastBOT.Core
                 {
                     var doc = new HtmlDocument();
                     doc.LoadHtml(htmlContent);
-                    _lastParsedDocument = doc;
+
+                    lock (_lockObject)
+                    {
+                        _lastParsedDocument = doc;
+                    }
+
                     return doc;
                 }
                 catch (Exception ex)
@@ -272,7 +314,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 現在のページのHTMLをパースして返す
+        /// 現在のページのHTMLをパースして返す（スレッドセーフ）
         /// </summary>
         /// <returns>パース済みのHtmlDocument</returns>
         public async Task<HtmlDocument> ParseCurrentPageAsync()
@@ -282,7 +324,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// タグ名で要素を検索（CHtmlParserのgetElementsByTagNameに相当）
+        /// タグ名で要素を検索（CHtmlParserのgetElementsByTagNameに相当・スレッドセーフ）
         /// </summary>
         /// <param name="tagName">タグ名</param>
         /// <param name="attributeName">属性名（オプション）</param>
@@ -292,7 +334,16 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
 
                 string cssSelector = tagName;
                 if (!string.IsNullOrEmpty(attributeName) && !string.IsNullOrEmpty(attributeValue))
@@ -311,7 +362,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 属性値が指定した文字列を含む要素を検索（CHtmlParserのgetElementsByTagName4Containに相当）
+        /// 属性値が指定した文字列を含む要素を検索（CHtmlParserのgetElementsByTagName4Containに相当・スレッドセーフ）
         /// </summary>
         /// <param name="tagName">タグ名</param>
         /// <param name="attributeName">属性名</param>
@@ -321,7 +372,16 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
 
                 // CSSセレクターで部分一致（XPathを使用）
                 var xpath = $"//{tagName}[contains(@{attributeName}, '{containsValue}')]";
@@ -336,7 +396,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// フォームのinput要素からパラメータを抽出（CHtmlParserのgetReqParamに相当）
+        /// フォームのinput要素からパラメーターを抽出（CHtmlParserのgetReqParamに相当・スレッドセーフ）
         /// </summary>
         /// <param name="formSelector">フォームのCSSセレクター（オプション）</param>
         /// <returns>input要素のname-value辞書</returns>
@@ -344,7 +404,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var parameters = new Dictionary<string, string>();
 
                 string inputSelector = string.IsNullOrEmpty(formSelector) ? "input" : $"{formSelector} input";
@@ -374,7 +444,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 指定した要素の属性値を取得（CHtmlParserのgetAttrValueに相当）
+        /// 指定した要素の属性値を取得（CHtmlParserのgetAttrValueに相当・スレッドセーフ）
         /// </summary>
         /// <param name="node">対象ノード</param>
         /// <param name="attributeName">属性名</param>
@@ -385,7 +455,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 指定した要素の内部テキストを取得（CHtmlParserのgetInnerTextに相当）
+        /// 指定した要素の内部テキストを取得（CHtmlParserのgetInnerTextに相当・スレッドセーフ）
         /// </summary>
         /// <param name="node">対象ノード</param>
         /// <returns>内部テキスト</returns>
@@ -395,7 +465,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 指定したXPathで要素を検索
+        /// 指定したXPathで要素を検索（スレッドセーフ）
         /// </summary>
         /// <param name="xpath">XPath式</param>
         /// <returns>見つかった要素のリスト</returns>
@@ -403,7 +473,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var nodes = doc.DocumentNode.SelectNodes(xpath);
                 return nodes?.ToList() ?? new List<HtmlNode>();
             }
@@ -415,7 +495,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// CSSセレクターで要素を検索（Fizzlerを使用）
+        /// CSSセレクターで要素を検索（Fizzlerを使用・スレッドセーフ）
         /// </summary>
         /// <param name="cssSelector">CSSセレクター</param>
         /// <returns>見つかった要素のリスト</returns>
@@ -423,7 +503,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var nodes = doc.DocumentNode.QuerySelectorAll(cssSelector);
                 return nodes?.ToList() ?? new List<HtmlNode>();
             }
@@ -435,7 +525,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 単一要素をCSSセレクターで検索（Fizzlerを使用）
+        /// 単一要素をCSSセレクターで検索（Fizzlerを使用・スレッドセーフ）
         /// </summary>
         /// <param name="cssSelector">CSSセレクター</param>
         /// <returns>見つかった最初の要素</returns>
@@ -443,7 +533,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 return doc.DocumentNode.QuerySelector(cssSelector);
             }
             catch (Exception ex)
@@ -454,7 +554,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// URLの妥当性をチェック（CHtmlParserのisUrlValidに相当）
+        /// URLの妥当性をチェック（CHtmlParserのisUrlValidに相当・スレッドセーフ）
         /// </summary>
         /// <param name="url">チェックするURL</param>
         /// <returns>妥当な場合true</returns>
@@ -466,10 +566,10 @@ namespace CefSharp.fastBOT.Core
 
         #endregion
 
-        #region 高度なHTMLパーシング機能
+        #region 高度なHTMLパーシング機能（スレッドセーフ）
 
         /// <summary>
-        /// テーブルデータを抽出
+        /// テーブルデータを抽出（スレッドセーフ）
         /// </summary>
         /// <param name="tableSelector">テーブルのCSSセレクター</param>
         /// <returns>テーブルデータ（行と列の2次元配列）</returns>
@@ -477,7 +577,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var table = doc.DocumentNode.QuerySelector(tableSelector);
 
                 if (table == null)
@@ -505,7 +615,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// リンク情報を抽出
+        /// リンク情報を抽出（スレッドセーフ）
         /// </summary>
         /// <param name="linkSelector">リンクのCSSセレクター</param>
         /// <returns>リンク情報のリスト</returns>
@@ -513,7 +623,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var links = doc.DocumentNode.QuerySelectorAll(linkSelector);
 
                 var linkInfos = new List<LinkInfo>();
@@ -545,7 +665,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 画像情報を抽出
+        /// 画像情報を抽出（スレッドセーフ）
         /// </summary>
         /// <param name="imageSelector">画像のCSSセレクター</param>
         /// <returns>画像情報のリスト</returns>
@@ -553,7 +673,17 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var images = doc.DocumentNode.QuerySelectorAll(imageSelector);
 
                 var imageInfos = new List<ImageInfo>();
@@ -585,14 +715,24 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// メタタグ情報を抽出
+        /// メタタグ情報を抽出（スレッドセーフ）
         /// </summary>
         /// <returns>メタタグ情報の辞書</returns>
         public async Task<Dictionary<string, string>> ExtractMetaTagsAsync()
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 var metaTags = doc.DocumentNode.QuerySelectorAll("meta");
 
                 var metaInfo = new Dictionary<string, string>();
@@ -627,10 +767,10 @@ namespace CefSharp.fastBOT.Core
 
         #endregion
 
-        #region ファイル保存機能
+        #region ファイル保存機能（スレッドセーフ）
 
         /// <summary>
-        /// HTMLをファイルに保存
+        /// HTMLをファイルに保存（スレッドセーフ）
         /// </summary>
         /// <param name="filePath">保存先ファイルパス</param>
         /// <returns>成功した場合true</returns>
@@ -640,7 +780,6 @@ namespace CefSharp.fastBOT.Core
             {
                 var html = await GetPageHtmlAsync();
                 await File.WriteAllTextAsync(filePath, html, Encoding.UTF8);
-                Console.WriteLine($"HTML saved to: {filePath}");
                 return true;
             }
             catch (Exception ex)
@@ -651,7 +790,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// パース済みHTMLをファイルに保存
+        /// パース済みHTMLをファイルに保存（スレッドセーフ）
         /// </summary>
         /// <param name="filePath">保存先ファイルパス</param>
         /// <returns>成功した場合true</returns>
@@ -659,9 +798,18 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var doc = _lastParsedDocument ?? await ParseCurrentPageAsync();
+                HtmlDocument doc;
+                lock (_lockObject)
+                {
+                    doc = _lastParsedDocument;
+                }
+
+                if (doc == null)
+                {
+                    doc = await ParseCurrentPageAsync();
+                }
+
                 await File.WriteAllTextAsync(filePath, doc.DocumentNode.OuterHtml, Encoding.UTF8);
-                Console.WriteLine($"Parsed HTML saved to: {filePath}");
                 return true;
             }
             catch (Exception ex)
@@ -672,7 +820,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// ページのスクリーンショットと共にHTMLを保存
+        /// ページのスクリーンショットと共にHTMLを保存（スレッドセーフ）
         /// </summary>
         /// <param name="baseFileName">ベースファイル名（拡張子なし）</param>
         /// <returns>成功した場合true</returns>
@@ -697,7 +845,7 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// ページ情報をJSONファイルに保存
+        /// ページ情報をJSONファイルに保存（スレッドセーフ）
         /// </summary>
         /// <param name="filePath">保存先ファイルパス</param>
         /// <returns>成功した場合true</returns>
@@ -713,7 +861,6 @@ namespace CefSharp.fastBOT.Core
                 });
 
                 await File.WriteAllTextAsync(filePath, json, Encoding.UTF8);
-                Console.WriteLine($"Page info saved to: {filePath}");
                 return true;
             }
             catch (Exception ex)
@@ -725,64 +872,61 @@ namespace CefSharp.fastBOT.Core
 
         #endregion
 
-        #region デバッグ機能
+        #region プロパティ（スレッドセーフ）
 
         /// <summary>
-        /// パラメータマップをコンソールに出力（CHtmlParserのtraceMapに相当）
+        /// 最後にパースされたHTMLドキュメント（スレッドセーフ）
         /// </summary>
-        /// <param name="parameters">パラメータ辞書</param>
-        public void TraceParameters(Dictionary<string, string> parameters)
+        public HtmlDocument LastParsedDocument
         {
-            Console.WriteLine("=== Form Parameters ===");
-            foreach (var kvp in parameters)
+            get
             {
-                Console.WriteLine($"Key: {kvp.Key}");
-                Console.WriteLine($"Value: {kvp.Value}");
-                Console.WriteLine("---");
+                lock (_lockObject)
+                {
+                    return _lastParsedDocument;
+                }
             }
-            Console.WriteLine("=======================");
         }
 
         /// <summary>
-        /// HTMLの解析結果をファイルに書き込み（CHtmlParserのwriteResultに相当）
+        /// 最後に取得されたHTMLコンテンツ（スレッドセーフ）
         /// </summary>
-        /// <param name="outputDirectory">出力ディレクトリ</param>
-        /// <returns>成功した場合true</returns>
-        public async Task<bool> WriteAnalysisResultAsync(string outputDirectory = null)
+        public string LastHtmlContent
         {
-            try
+            get
             {
-                outputDirectory = outputDirectory ?? Path.GetTempPath();
-                var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-                var fileName = $"html_analysis_result_{timestamp}.html";
-                var filePath = Path.Combine(outputDirectory, fileName);
-
-                var html = await GetPageHtmlAsync();
-                await File.WriteAllTextAsync(filePath, html, Encoding.UTF8);
-
-                Console.WriteLine($"Analysis result written to: {filePath}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"WriteAnalysisResultAsync error: {ex.Message}");
-                return false;
+                lock (_lockObject)
+                {
+                    return _lastHtmlContent;
+                }
             }
         }
 
         #endregion
 
-        #region プロパティ
+        #region リソース管理（スレッドセーフ）
 
         /// <summary>
-        /// 最後にパースされたHTMLドキュメント
+        /// リソースを解放（スレッドセーフ）
         /// </summary>
-        public HtmlDocument LastParsedDocument => _lastParsedDocument;
+        public void Dispose()
+        {
+            lock (_lockObject)
+            {
+                if (_disposed) return;
 
-        /// <summary>
-        /// 最後に取得されたHTMLコンテンツ
-        /// </summary>
-        public string LastHtmlContent => _lastHtmlContent;
+                try
+                {
+                    _lastParsedDocument = null;
+                    _lastHtmlContent = null;
+                    _disposed = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"HtmlExtractionService dispose error: {ex.Message}");
+                }
+            }
+        }
 
         #endregion
     }

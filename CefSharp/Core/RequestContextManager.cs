@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using CefSharp;
 
 namespace CefSharp.fastBOT.Core
 {
     /// <summary>
-    /// リクエストコンテキスト管理クラス
-    /// インスタンス番号ベースのキャッシュ管理（1, 2, 3...の順番でプロセス毎に分離）
+    /// リクエストコンテキスト管理クラス（シンプル版・確実動作）
     /// </summary>
     public class RequestContextManager : IDisposable
     {
@@ -22,75 +22,42 @@ namespace CefSharp.fastBOT.Core
             _contexts = new Dictionary<string, IRequestContext>();
 
             // 現在のインスタンス番号を取得
-            _instanceNumber = GetCurrentInstanceNumber();
+            _instanceNumber = CommonSettings.GetCurrentInstanceNumber();
 
-            // ベースキャッシュパスを設定
-            _baseCachePath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "fastBOT", "Instance", _instanceNumber.ToString()
-            );
+            // キャッシュパス
+            _baseCachePath = CommonSettings.GetCachePath(_instanceNumber);
 
-            Console.WriteLine($"RequestContextManager initialized for instance {_instanceNumber}");
-            Console.WriteLine($"Base cache path: {_baseCachePath}");
+            // ベースディレクトリを確実に作成
+            EnsureDirectoryExists(_baseCachePath);
         }
 
         /// <summary>
-        /// 現在のインスタンス番号を取得
+        /// ディレクトリの存在を確保
         /// </summary>
-        /// <returns>インスタンス番号</returns>
-        private int GetCurrentInstanceNumber()
+        /// <param name="directoryPath">作成するディレクトリパス</param>
+        private void EnsureDirectoryExists(string directoryPath)
         {
             try
             {
-                var currentProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
-                var baseDirectory = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT", "Instance"
-                );
-
-                if (Directory.Exists(baseDirectory))
+                if (!Directory.Exists(directoryPath))
                 {
-                    var instanceDirectories = Directory.GetDirectories(baseDirectory)
-                        .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
-                        .ToList();
+                    Directory.CreateDirectory(directoryPath);
 
-                    foreach (var dir in instanceDirectories)
+                    if (!Directory.Exists(directoryPath))
                     {
-                        var dirName = Path.GetFileName(dir);
-                        if (int.TryParse(dirName, out var number))
-                        {
-                            var lockFile = Path.Combine(dir, "instance.lock");
-                            if (File.Exists(lockFile))
-                            {
-                                try
-                                {
-                                    var lockContent = File.ReadAllText(lockFile);
-                                    if (int.TryParse(lockContent, out var lockedProcessId) && lockedProcessId == currentProcessId)
-                                    {
-                                        return number;
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"Failed to read lock file {lockFile}: {ex.Message}");
-                                }
-                            }
-                        }
+                        throw new DirectoryNotFoundException($"Failed to create directory: {directoryPath}");
                     }
                 }
-
-                // ロックファイルが見つからない場合は1を返す
-                return 1;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"GetCurrentInstanceNumber error: {ex.Message}");
-                return 1;
+                Console.WriteLine($"EnsureDirectoryExists error for {directoryPath}: {ex.Message}");
+                throw;
             }
         }
 
         /// <summary>
-        /// 分離されたコンテキストを作成
+        /// 分離されたコンテキストを作成（シンプル版）
         /// </summary>
         /// <param name="name">コンテキスト名</param>
         /// <returns>リクエストコンテキスト</returns>
@@ -104,27 +71,87 @@ namespace CefSharp.fastBOT.Core
                     return _contexts[name];
                 }
 
-                // インスタンス番号配下のコンテキスト固有ディレクトリを作成
-                var contextCachePath = Path.Combine(_baseCachePath, "Contexts", name);
-                Directory.CreateDirectory(contextCachePath);
+                // CefSharp初期化チェック
+                if (!(bool)Cef.IsInitialized)
+                {
+                    Console.WriteLine("WARNING: Cef is not initialized, using global context");
+                    return Cef.GetGlobalRequestContext();
+                }
 
+                // コンテキストパス
+                var contextName = GetContextName(name);
+                var contextCachePath = Path.Combine(_baseCachePath, contextName);
+
+                Console.WriteLine($"Creating context cache path: {contextCachePath}");
+                EnsureDirectoryExists(contextCachePath);
+
+                // 最小限のRequestContextSettings
                 var settings = new RequestContextSettings()
                 {
                     CachePath = contextCachePath,
-                    AcceptLanguageList = "ja-JP,ja,en-US,en"
+                    AcceptLanguageList = "ja,en-US;q=0.9,en;q=0.8"
                 };
 
-                var context = new RequestContext(settings);
-                _contexts[name] = context;
+                Console.WriteLine($"Creating RequestContext: {name} -> {contextName}");
+                Console.WriteLine($"Cache path: {contextCachePath}");
 
-                Console.WriteLine($"RequestContext created: {name}");
-                Console.WriteLine($"Context cache path: {contextCachePath}");
+                // RequestContextを作成
+                IRequestContext context = null;
+                try
+                {
+                    context = new RequestContext(settings);
+                    Console.WriteLine($"RequestContext created successfully: {contextName}");
+                }
+                catch (Exception createEx)
+                {
+                    Console.WriteLine($"Failed to create RequestContext: {createEx.Message}");
+
+                    // フォールバック: グローバルコンテキスト
+                    Console.WriteLine("Using global RequestContext as fallback");
+                    context = Cef.GetGlobalRequestContext();
+                }
+
+                if (context != null)
+                {
+                    _contexts[name] = context;
+                    System.Threading.Thread.Sleep(50); // 短い待機
+                }
+
                 return context;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"RequestContext creation failed: {ex.Message}");
-                return null;
+                Console.WriteLine($"RequestContext creation failed for '{name}': {ex.Message}");
+                Console.WriteLine("Using global RequestContext as final fallback");
+                return Cef.GetGlobalRequestContext();
+            }
+        }
+
+        /// <summary>
+        /// コンテキスト名を生成
+        /// </summary>
+        /// <param name="originalName">元のコンテキスト名</param>
+        /// <returns>コンテキスト名</returns>
+        private string GetContextName(string originalName)
+        {
+            try
+            {
+                // ASCII文字のみ、最大8文字
+                var name = new string(originalName
+                    .Where(c => char.IsLetterOrDigit(c))
+                    .Take(8)
+                    .ToArray());
+
+                if (string.IsNullOrEmpty(name))
+                {
+                    name = "ctx";
+                }
+
+                return name;
+            }
+            catch
+            {
+                return "default";
             }
         }
 
@@ -152,7 +179,6 @@ namespace CefSharp.fastBOT.Core
                 {
                     context?.Dispose();
                     _contexts.Remove(name);
-                    Console.WriteLine($"RequestContext removed: {name}");
                     return true;
                 }
                 catch (Exception ex)
@@ -232,13 +258,11 @@ namespace CefSharp.fastBOT.Core
 
             try
             {
-                // ファイルサイズを合計
                 foreach (var fileInfo in directoryInfo.GetFiles())
                 {
                     size += fileInfo.Length;
                 }
 
-                // サブディレクトリも再帰的に計算
                 foreach (var subDirectory in directoryInfo.GetDirectories())
                 {
                     size += GetDirectorySize(subDirectory);
@@ -263,42 +287,36 @@ namespace CefSharp.fastBOT.Core
             {
                 if (!string.IsNullOrEmpty(contextName))
                 {
-                    // 特定のコンテキストのキャッシュをクリア
-                    var contextPath = Path.Combine(_baseCachePath, "Contexts", contextName);
+                    var name = GetContextName(contextName);
+                    var contextPath = Path.Combine(_baseCachePath, name);
                     if (Directory.Exists(contextPath))
                     {
                         Directory.Delete(contextPath, true);
-                        Directory.CreateDirectory(contextPath);
-                        Console.WriteLine($"Cache cleared for context: {contextName}");
+                        EnsureDirectoryExists(contextPath);
                         return true;
                     }
                 }
                 else
                 {
-                    // 全体のキャッシュをクリア（ロックファイルは保持）
                     if (Directory.Exists(_baseCachePath))
                     {
                         var lockFile = Path.Combine(_baseCachePath, "instance.lock");
                         var lockFileExists = File.Exists(lockFile);
                         string lockContent = null;
 
-                        // ロックファイルのバックアップ
                         if (lockFileExists)
                         {
                             lockContent = File.ReadAllText(lockFile);
                         }
 
-                        // ディレクトリを削除して再作成
                         Directory.Delete(_baseCachePath, true);
-                        Directory.CreateDirectory(_baseCachePath);
+                        EnsureDirectoryExists(_baseCachePath);
 
-                        // ロックファイルを復元
                         if (lockFileExists && !string.IsNullOrEmpty(lockContent))
                         {
                             File.WriteAllText(lockFile, lockContent);
                         }
 
-                        Console.WriteLine($"All cache cleared for instance {_instanceNumber}");
                         return true;
                     }
                 }
@@ -313,128 +331,6 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// 全インスタンスの情報を取得
-        /// </summary>
-        /// <returns>インスタンス情報のリスト</returns>
-        public static List<InstanceInfo> GetAllInstancesInfo()
-        {
-            var instances = new List<InstanceInfo>();
-
-            try
-            {
-                var baseDirectory = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT", "Instance"
-                );
-
-                if (Directory.Exists(baseDirectory))
-                {
-                    var instanceDirectories = Directory.GetDirectories(baseDirectory)
-                        .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
-                        .OrderBy(dir => int.Parse(Path.GetFileName(dir)))
-                        .ToList();
-
-                    foreach (var dir in instanceDirectories)
-                    {
-                        var dirName = Path.GetFileName(dir);
-                        if (int.TryParse(dirName, out var number))
-                        {
-                            var instance = new InstanceInfo
-                            {
-                                InstanceNumber = number,
-                                CachePath = dir,
-                                IsActive = false,
-                                ProcessId = null,
-                                CacheSize = 0
-                            };
-
-                            // ロックファイルをチェック
-                            var lockFile = Path.Combine(dir, "instance.lock");
-                            if (File.Exists(lockFile))
-                            {
-                                try
-                                {
-                                    var lockContent = File.ReadAllText(lockFile);
-                                    if (int.TryParse(lockContent, out var processId))
-                                    {
-                                        try
-                                        {
-                                            var process = System.Diagnostics.Process.GetProcessById(processId);
-                                            if (!process.HasExited)
-                                            {
-                                                instance.IsActive = true;
-                                                instance.ProcessId = processId;
-                                            }
-                                        }
-                                        catch
-                                        {
-                                            // プロセスが存在しない場合
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"Failed to read lock file for instance {number}: {ex.Message}");
-                                }
-                            }
-
-                            // キャッシュサイズを計算
-                            try
-                            {
-                                var directoryInfo = new DirectoryInfo(dir);
-                                if (directoryInfo.Exists)
-                                {
-                                    instance.CacheSize = GetDirectorySizeStatic(directoryInfo);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"Failed to calculate cache size for instance {number}: {ex.Message}");
-                            }
-
-                            instances.Add(instance);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"GetAllInstancesInfo error: {ex.Message}");
-            }
-
-            return instances;
-        }
-
-        /// <summary>
-        /// ディレクトリサイズを計算（静的メソッド）
-        /// </summary>
-        /// <param name="directoryInfo">ディレクトリ情報</param>
-        /// <returns>サイズ（バイト）</returns>
-        private static long GetDirectorySizeStatic(DirectoryInfo directoryInfo)
-        {
-            long size = 0;
-
-            try
-            {
-                foreach (var fileInfo in directoryInfo.GetFiles())
-                {
-                    size += fileInfo.Length;
-                }
-
-                foreach (var subDirectory in directoryInfo.GetDirectories())
-                {
-                    size += GetDirectorySizeStatic(subDirectory);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error calculating directory size for {directoryInfo.FullName}: {ex.Message}");
-            }
-
-            return size;
-        }
-
-        /// <summary>
         /// 非アクティブなインスタンスのキャッシュをクリーンアップ
         /// </summary>
         /// <returns>クリーンアップされたインスタンス数</returns>
@@ -444,7 +340,7 @@ namespace CefSharp.fastBOT.Core
 
             try
             {
-                var instances = GetAllInstancesInfo();
+                var instances = CommonSettings.GetAllInstancesInfo();
                 var inactiveInstances = instances.Where(i => !i.IsActive).ToList();
 
                 foreach (var instance in inactiveInstances)
@@ -454,7 +350,6 @@ namespace CefSharp.fastBOT.Core
                         if (Directory.Exists(instance.CachePath))
                         {
                             Directory.Delete(instance.CachePath, true);
-                            Console.WriteLine($"Cleaned up inactive instance {instance.InstanceNumber}");
                             cleanedCount++;
                         }
                     }
@@ -463,8 +358,6 @@ namespace CefSharp.fastBOT.Core
                         Console.WriteLine($"Failed to cleanup instance {instance.InstanceNumber}: {ex.Message}");
                     }
                 }
-
-                Console.WriteLine($"Cleanup completed: {cleanedCount} inactive instances removed");
             }
             catch (Exception ex)
             {
@@ -494,7 +387,6 @@ namespace CefSharp.fastBOT.Core
                 }
                 _contexts.Clear();
                 _disposed = true;
-                Console.WriteLine($"RequestContextManager disposed for instance {_instanceNumber}");
             }
         }
     }

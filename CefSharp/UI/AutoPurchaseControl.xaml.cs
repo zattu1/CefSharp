@@ -9,11 +9,13 @@ namespace CefSharp.fastBOT.UI
 {
     /// <summary>
     /// AutoPurchaseControl.xaml の相互作用ロジック
-    /// 自動購入機能のコントロールパネル（UserControl）改良版
+    /// 自動購入機能のコントロールパネル（UserControl）改良版（スレッドセーフ対応）
     /// </summary>
     public partial class AutoPurchaseControl : UserControl
     {
         // 各種マネージャー
+        private BrowserTabManager _browserTabManager;
+        private RequestContextManager _requestContextManager;
         private ProxyManager _proxyManager;
         private AutomationService _automationService;
         private HtmlExtractionService _htmlService;
@@ -28,9 +30,8 @@ namespace CefSharp.fastBOT.UI
         // アカウント切り替え管理
         private bool _isUpdatingAccount = false;
 
-        // MainWindowのブラウザを参照するためのプロパティ
-        public BrowserTabManager BrowserTabManager { get; set; }
-        public RequestContextManager RequestContextManager { get; set; }
+        // スレッドセーフティ用
+        private readonly object _lockObject = new object();
 
         public AutoPurchaseControl()
         {
@@ -38,6 +39,78 @@ namespace CefSharp.fastBOT.UI
             InitializeManagers();
             InitializeUI();
         }
+
+        #region スレッドセーフ用ヘルパーメソッド
+
+        /// <summary>
+        /// UIスレッドで安全にアクションを実行
+        /// </summary>
+        private void ExecuteOnUIThread(Action action)
+        {
+            try
+            {
+                if (Application.Current?.Dispatcher?.CheckAccess() == true)
+                {
+                    action();
+                }
+                else
+                {
+                    Application.Current?.Dispatcher?.Invoke(action);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ExecuteOnUIThread error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// UIスレッドで安全に非同期アクションを実行
+        /// </summary>
+        private async Task ExecuteOnUIThreadAsync(Func<Task> action)
+        {
+            try
+            {
+                if (Application.Current?.Dispatcher?.CheckAccess() == true)
+                {
+                    await action();
+                }
+                else if (Application.Current?.Dispatcher != null)
+                {
+                    await Application.Current.Dispatcher.InvokeAsync(action).Task;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ExecuteOnUIThreadAsync error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// UIスレッドで安全に戻り値を取得
+        /// </summary>
+        private T ExecuteOnUIThread<T>(Func<T> func)
+        {
+            try
+            {
+                if (Application.Current?.Dispatcher?.CheckAccess() == true)
+                {
+                    return func();
+                }
+                else if (Application.Current?.Dispatcher != null)
+                {
+                    return Application.Current.Dispatcher.Invoke(func);
+                }
+                return default(T);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ExecuteOnUIThread<T> error: {ex.Message}");
+                return default(T);
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// 各種マネージャーを初期化
@@ -59,8 +132,6 @@ namespace CefSharp.fastBOT.UI
 
                 // イベントハンドラーを設定
                 SetupEventHandlers();
-
-                Console.WriteLine("AutoPurchaseControl managers initialized successfully");
             }
             catch (Exception ex)
             {
@@ -209,20 +280,27 @@ namespace CefSharp.fastBOT.UI
         /// <summary>
         /// MainWindowのブラウザサービスを設定
         /// </summary>
-        public void SetBrowserServices(BrowserTabManager tabManager, RequestContextManager contextManager)
+        public void SetBrowserServices(BrowserTabManager browserTabManager, RequestContextManager requestContextManager)
         {
             try
             {
-                BrowserTabManager = tabManager;
-                RequestContextManager = contextManager;
+                _browserTabManager = browserTabManager;
+                _requestContextManager = requestContextManager;
 
                 // 現在のブラウザを取得してHtmlExtractionServiceを初期化
-                var currentBrowser = BrowserTabManager?.GetCurrentBrowser();
+                var currentBrowser = _browserTabManager.GetCurrentBrowser();
                 if (currentBrowser != null)
                 {
                     _htmlService = new HtmlExtractionService(currentBrowser);
                     _automationService = new AutomationService(currentBrowser);
-                    StartButton.IsEnabled = true;
+
+                    ExecuteOnUIThread(() =>
+                    {
+                        lock (_lockObject)
+                        {
+                            StartButton.IsEnabled = true;
+                        }
+                    });
                 }
 
                 Console.WriteLine("Browser services set successfully");
@@ -233,32 +311,32 @@ namespace CefSharp.fastBOT.UI
             }
         }
 
-        #region アカウント管理イベント
+        #region アカウント管理イベント（スレッドセーフ版）
 
         /// <summary>
-        /// アカウントマネージャーのCurrentAccountChangedイベントハンドラー
+        /// アカウントマネージャーのCurrentAccountChangedイベントハンドラー（スレッドセーフ版）
         /// </summary>
         private void AccountManager_CurrentAccountChanged(object sender, AccountInfo account)
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            ExecuteOnUIThread(() =>
             {
                 UpdateAccountStatus(account);
             });
         }
 
         /// <summary>
-        /// アカウントマネージャーのAccountListUpdatedイベントハンドラー
+        /// アカウントマネージャーのAccountListUpdatedイベントハンドラー（スレッドセーフ版）
         /// </summary>
         private void AccountManager_AccountListUpdated(object sender, EventArgs e)
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            ExecuteOnUIThread(() =>
             {
                 RefreshAccountComboBox();
             });
         }
 
         /// <summary>
-        /// アカウントコンボボックスの選択変更イベント
+        /// アカウントコンボボックスの選択変更イベント（スレッドセーフ版）
         /// </summary>
         private void AccountComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -266,15 +344,18 @@ namespace CefSharp.fastBOT.UI
 
             try
             {
-                if (AccountComboBox.SelectedIndex >= 0)
+                lock (_lockObject)
                 {
-                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
-                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+                    if (AccountComboBox.SelectedIndex >= 0)
+                    {
+                        int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                        var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
 
-                    LoadAccountToUI(account);
-                    _accountManager.SetCurrentAccount(account);
+                        LoadAccountToUI(account);
+                        _accountManager.SetCurrentAccount(account);
 
-                    UpdateStatus($"アカウント{selectedAccountNumber}に切り替えました");
+                        UpdateStatus($"アカウント{selectedAccountNumber}に切り替えました");
+                    }
                 }
             }
             catch (Exception ex)
@@ -284,25 +365,48 @@ namespace CefSharp.fastBOT.UI
         }
 
         /// <summary>
-        /// アカウント保存ボタンクリックイベント
+        /// アカウント保存ボタンクリックイベント（スレッドセーフ版）
         /// </summary>
         private async void SaveAccountButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                if (AccountComboBox.SelectedIndex >= 0)
+                // UIスレッドでの実行を保証
+                if (!Dispatcher.CheckAccess())
                 {
-                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
-                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
-
-                    SaveUIToAccount(account);
-                    account.IsActive = true;
-
-                    await _accountManager.UpdateAccountAsync(account);
-                    RefreshAccountComboBox();
-
-                    ShowSuccess($"アカウント{selectedAccountNumber}の情報を保存しました");
+                    await Dispatcher.InvokeAsync(() => SaveAccountButton_Click(sender, e));
+                    return;
                 }
+
+                if (AccountComboBox.SelectedIndex < 0)
+                {
+                    ShowError("アカウントが選択されていません");
+                    return;
+                }
+
+                int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+
+                // 正しい型（AccountInfo）を使用してアカウントデータを準備
+                AccountInfo account;
+                lock (_lockObject)
+                {
+                    account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+                    if (account == null)
+                    {
+                        ShowError("アカウントが見つかりません");
+                        return;
+                    }
+
+                    account.IsActive = true;
+                }
+
+                // 非同期更新
+                await _accountManager.UpdateAccountAsync(account);
+
+                // UI更新
+                RefreshAccountComboBox();
+
+                ShowSuccess($"アカウント{selectedAccountNumber}の情報を保存しました");
             }
             catch (Exception ex)
             {
@@ -311,22 +415,28 @@ namespace CefSharp.fastBOT.UI
         }
 
         /// <summary>
-        /// 新規アカウントボタンクリックイベント（クリア機能として動作）
+        /// 新規アカウントボタンクリックイベント（クリア機能として動作）（スレッドセーフ版）
         /// </summary>
         private void NewAccountButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                if (AccountComboBox.SelectedIndex >= 0)
+                ExecuteOnUIThread(() =>
                 {
-                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
-                    var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
+                    lock (_lockObject)
+                    {
+                        if (AccountComboBox.SelectedIndex >= 0)
+                        {
+                            int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                            var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
 
-                    // フォームをクリア
-                    ClearUI();
+                            // フォームをクリア
+                            ClearUI();
 
-                    UpdateStatus($"アカウント{selectedAccountNumber}のフォームをクリアしました");
-                }
+                            UpdateStatus($"アカウント{selectedAccountNumber}のフォームをクリアしました");
+                        }
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -335,25 +445,35 @@ namespace CefSharp.fastBOT.UI
         }
 
         /// <summary>
-        /// アカウント削除ボタンクリックイベント
+        /// アカウント削除ボタンクリックイベント（スレッドセーフ版）
         /// </summary>
         private async void DeleteAccountButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                if (AccountComboBox.SelectedIndex >= 0)
+                var selectedAccountNumber = ExecuteOnUIThread(() =>
                 {
-                    int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
+                    lock (_lockObject)
+                    {
+                        return AccountComboBox.SelectedIndex >= 0 ? AccountComboBox.SelectedIndex + 1 : -1;
+                    }
+                });
 
+                if (selectedAccountNumber > 0)
+                {
                     var result = MessageBox.Show($"アカウント{selectedAccountNumber}のデータを削除しますか？",
                         "確認", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
                     if (result == MessageBoxResult.Yes)
                     {
                         await _accountManager.ClearAccountAsync(selectedAccountNumber);
-                        ClearUI();
-                        RefreshAccountComboBox();
-                        UpdateStatus($"アカウント{selectedAccountNumber}のデータを削除しました");
+
+                        ExecuteOnUIThread(() =>
+                        {
+                            ClearUI();
+                            RefreshAccountComboBox();
+                            UpdateStatus($"アカウント{selectedAccountNumber}のデータを削除しました");
+                        });
                     }
                 }
             }
@@ -523,7 +643,7 @@ namespace CefSharp.fastBOT.UI
 
         #endregion
 
-        #region Proxy管理
+        #region Proxy管理（スレッドセーフ版）
 
         private async void ApplyProxyButton_Click(object sender, RoutedEventArgs e)
         {
@@ -544,10 +664,10 @@ namespace CefSharp.fastBOT.UI
         {
             try
             {
-                string proxyText = ProxyLineEdit.Text.Trim();
+                string proxyText = ExecuteOnUIThread(() => ProxyLineEdit.Text.Trim());
                 Console.WriteLine($"プロキシ設定適用開始: '{proxyText}'");
 
-                var currentBrowser = BrowserTabManager?.GetCurrentBrowser();
+                var currentBrowser = _browserTabManager.GetCurrentBrowser();
                 if (currentBrowser == null)
                 {
                     ShowError("ブラウザが見つかりません");
@@ -650,23 +770,30 @@ namespace CefSharp.fastBOT.UI
 
         private void SetProxyRotationEnabled(bool enabled)
         {
-            PerRequestRadioButton.IsEnabled = enabled;
-            EverySecondRadioButton.IsEnabled = enabled;
-            ProxyEverySecondLineEdit.IsEnabled = enabled;
+            ExecuteOnUIThread(() =>
+            {
+                lock (_lockObject)
+                {
+                    PerRequestRadioButton.IsEnabled = enabled;
+                    EverySecondRadioButton.IsEnabled = enabled;
+                    ProxyEverySecondLineEdit.IsEnabled = enabled;
 
-            if (enabled && EverySecondRadioButton.IsChecked == true)
-            {
-                StartProxyRotationTimer();
-            }
-            else
-            {
-                StopProxyRotationTimer();
-            }
+                    if (enabled && EverySecondRadioButton.IsChecked == true)
+                    {
+                        StartProxyRotationTimer();
+                    }
+                    else
+                    {
+                        StopProxyRotationTimer();
+                    }
+                }
+            });
         }
 
         private void StartProxyRotationTimer()
         {
-            if (int.TryParse(ProxyEverySecondLineEdit.Text, out int seconds))
+            var secondsText = ExecuteOnUIThread(() => ProxyEverySecondLineEdit.Text);
+            if (int.TryParse(secondsText, out int seconds))
             {
                 _proxyRotationTimer.Interval = seconds * 1000;
                 _proxyRotationTimer.Start();
@@ -682,202 +809,170 @@ namespace CefSharp.fastBOT.UI
 
         private async void ProxyRotationTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
-            await Dispatcher.InvokeAsync(async () =>
+            try
             {
-                await ApplyProxySettings();
-            });
+                await ExecuteOnUIThreadAsync(async () =>
+                {
+                    await ApplyProxySettings();
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ProxyRotationTimer_Elapsed error: {ex.Message}");
+            }
         }
 
         #endregion
 
-        #region ヘルパーメソッド
+        #region ヘルパーメソッド（スレッドセーフ版）
 
         /// <summary>
-        /// UIからアカウントに情報を保存
-        /// </summary>
-        private void SaveUIToAccount(AccountInfo account)
-        {
-            try
-            {
-                account.LoginId = LoginEdit.Text;
-                account.Password = PasswordEdit.Password;
-
-                // Proxy設定
-                var proxyParts = ProxyLineEdit.Text.Split(':');
-                if (proxyParts.Length >= 2)
-                {
-                    account.ProxyHost = proxyParts[0];
-                    if (int.TryParse(proxyParts[1], out int port))
-                        account.ProxyPort = port;
-                }
-
-                account.UseProxyRotation = ProxyRotationCheckBox.IsChecked == true;
-                account.RotationPerRequest = PerRequestRadioButton.IsChecked == true;
-                if (int.TryParse(ProxyEverySecondLineEdit.Text, out int interval))
-                    account.RotationIntervalSeconds = interval;
-
-                // 購入者情報
-                account.LastName = LastNameLineEdit.Text;
-                account.FirstName = FirstNameLineEdit.Text;
-                account.LastKana = LastKanaLineEdit.Text;
-                account.FirstKana = FirstKanaLineEdit.Text;
-                account.Email = EmailLineEdit.Text;
-                account.Tel1 = Tel1LineEdit.Text;
-                account.Tel2 = Tel2LineEdit.Text;
-                account.Tel3 = Tel3LineEdit.Text;
-
-                // クレジットカード情報
-                account.CardNumber = CardNumberLineEdit.Text;
-                account.Cvv = CvvLineEdit.Text;
-                account.CardName = CardNameLineEdit.Text;
-
-                if (MonthComboBox.SelectedItem != null)
-                    account.ExpiryMonth = MonthComboBox.SelectedItem.ToString();
-                if (YearComboBox.SelectedItem != null)
-                    account.ExpiryYear = YearComboBox.SelectedItem.ToString();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"SaveUIToAccount error: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// アカウント情報をUIに読み込み
+        /// アカウント情報をUIに読み込み（スレッドセーフ版）
         /// </summary>
         private void LoadAccountToUI(AccountInfo account)
         {
             try
             {
-                _isUpdatingAccount = true;
-
-                // ログイン情報
-                LoginEdit.Text = account.LoginId ?? "";
-                PasswordEdit.Password = account.Password ?? "";
-
-                // Proxy設定
-                if (!string.IsNullOrEmpty(account.ProxyHost))
+                lock (_lockObject)
                 {
-                    ProxyLineEdit.Text = $"{account.ProxyHost}:{account.ProxyPort}";
-                }
-                ProxyRotationCheckBox.IsChecked = account.UseProxyRotation;
-                PerRequestRadioButton.IsChecked = account.RotationPerRequest;
-                EverySecondRadioButton.IsChecked = !account.RotationPerRequest;
-                ProxyEverySecondLineEdit.Text = account.RotationIntervalSeconds.ToString();
+                    _isUpdatingAccount = true;
 
-                // 購入者情報
-                LastNameLineEdit.Text = account.LastName ?? "";
-                FirstNameLineEdit.Text = account.FirstName ?? "";
-                LastKanaLineEdit.Text = account.LastKana ?? "";
-                FirstKanaLineEdit.Text = account.FirstKana ?? "";
-                EmailLineEdit.Text = account.Email ?? "";
-                Tel1LineEdit.Text = account.Tel1 ?? "";
-                Tel2LineEdit.Text = account.Tel2 ?? "";
-                Tel3LineEdit.Text = account.Tel3 ?? "";
+                    // 既存の読み込み処理...
+                    LoginEdit.Text = account.LoginId ?? "";
+                    PasswordEdit.Password = account.Password ?? "";
 
-                // クレジットカード情報
-                CardNumberLineEdit.Text = account.CardNumber ?? "";
-                CvvLineEdit.Text = account.Cvv ?? "";
-                CardNameLineEdit.Text = account.CardName ?? "";
-
-                // 有効期限
-                if (!string.IsNullOrEmpty(account.ExpiryMonth))
-                {
-                    for (int i = 0; i < MonthComboBox.Items.Count; i++)
+                    // Proxy設定
+                    if (!string.IsNullOrEmpty(account.ProxyHost))
                     {
-                        if (MonthComboBox.Items[i].ToString() == account.ExpiryMonth)
+                        ProxyLineEdit.Text = $"{account.ProxyHost}:{account.ProxyPort}";
+                    }
+                    ProxyRotationCheckBox.IsChecked = account.UseProxyRotation;
+                    PerRequestRadioButton.IsChecked = account.RotationPerRequest;
+                    EverySecondRadioButton.IsChecked = !account.RotationPerRequest;
+                    ProxyEverySecondLineEdit.Text = account.RotationIntervalSeconds.ToString();
+
+                    // 購入者情報
+                    LastNameLineEdit.Text = account.LastName ?? "";
+                    FirstNameLineEdit.Text = account.FirstName ?? "";
+                    LastKanaLineEdit.Text = account.LastKana ?? "";
+                    FirstKanaLineEdit.Text = account.FirstKana ?? "";
+                    EmailLineEdit.Text = account.Email ?? "";
+                    Tel1LineEdit.Text = account.Tel1 ?? "";
+                    Tel2LineEdit.Text = account.Tel2 ?? "";
+                    Tel3LineEdit.Text = account.Tel3 ?? "";
+
+                    // クレジットカード情報
+                    CardNumberLineEdit.Text = account.CardNumber ?? "";
+                    CvvLineEdit.Text = account.Cvv ?? "";
+                    CardNameLineEdit.Text = account.CardName ?? "";
+
+                    // 有効期限
+                    if (!string.IsNullOrEmpty(account.ExpiryMonth))
+                    {
+                        for (int i = 0; i < MonthComboBox.Items.Count; i++)
                         {
-                            MonthComboBox.SelectedIndex = i;
-                            break;
+                            if (MonthComboBox.Items[i].ToString() == account.ExpiryMonth)
+                            {
+                                MonthComboBox.SelectedIndex = i;
+                                break;
+                            }
                         }
                     }
-                }
 
-                if (!string.IsNullOrEmpty(account.ExpiryYear))
-                {
-                    for (int i = 0; i < YearComboBox.Items.Count; i++)
+                    if (!string.IsNullOrEmpty(account.ExpiryYear))
                     {
-                        if (YearComboBox.Items[i].ToString() == account.ExpiryYear)
+                        for (int i = 0; i < YearComboBox.Items.Count; i++)
                         {
-                            YearComboBox.SelectedIndex = i;
-                            break;
+                            if (YearComboBox.Items[i].ToString() == account.ExpiryYear)
+                            {
+                                YearComboBox.SelectedIndex = i;
+                                break;
+                            }
                         }
                     }
-                }
 
-                _isUpdatingAccount = false;
+                    _isUpdatingAccount = false;
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"LoadAccountToUI error: {ex.Message}");
+                Console.WriteLine($"LoadAccountToUIWithOTP error: {ex.Message}");
                 _isUpdatingAccount = false;
             }
         }
 
         /// <summary>
-        /// UIをクリア
+        /// UIをクリア（スレッドセーフ版）
         /// </summary>
         private void ClearUI()
         {
             try
             {
-                _isUpdatingAccount = true;
+                lock (_lockObject)
+                {
+                    _isUpdatingAccount = true;
 
-                LoginEdit.Text = "";
-                PasswordEdit.Password = "";
-                ProxyLineEdit.Text = "127.0.0.1:8080";
-                ProxyRotationCheckBox.IsChecked = false;
-                PerRequestRadioButton.IsChecked = true;
-                ProxyEverySecondLineEdit.Text = "30";
-                LastNameLineEdit.Text = "";
-                FirstNameLineEdit.Text = "";
-                LastKanaLineEdit.Text = "";
-                FirstKanaLineEdit.Text = "";
-                EmailLineEdit.Text = "";
-                Tel1LineEdit.Text = "";
-                Tel2LineEdit.Text = "";
-                Tel3LineEdit.Text = "";
-                CardNumberLineEdit.Text = "";
-                CvvLineEdit.Text = "";
-                CardNameLineEdit.Text = "";
-                MonthComboBox.SelectedIndex = 0;
-                YearComboBox.SelectedIndex = 0;
+                    // 既存のクリア処理...
+                    LoginEdit.Text = "";
+                    PasswordEdit.Password = "";
+                    ProxyLineEdit.Text = "127.0.0.1:8080";
+                    ProxyRotationCheckBox.IsChecked = false;
+                    PerRequestRadioButton.IsChecked = true;
+                    ProxyEverySecondLineEdit.Text = "30";
+                    LastNameLineEdit.Text = "";
+                    FirstNameLineEdit.Text = "";
+                    LastKanaLineEdit.Text = "";
+                    FirstKanaLineEdit.Text = "";
+                    EmailLineEdit.Text = "";
+                    Tel1LineEdit.Text = "";
+                    Tel2LineEdit.Text = "";
+                    Tel3LineEdit.Text = "";
+                    CardNumberLineEdit.Text = "";
+                    CvvLineEdit.Text = "";
+                    CardNameLineEdit.Text = "";
+                    MonthComboBox.SelectedIndex = 0;
+                    YearComboBox.SelectedIndex = 0;
+                    IntervalEdit.Text = "2000";
 
-                _isUpdatingAccount = false;
+                    _isUpdatingAccount = false;
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ClearUI error: {ex.Message}");
+                Console.WriteLine($"ClearUIWithOTP error: {ex.Message}");
                 _isUpdatingAccount = false;
             }
         }
 
         /// <summary>
-        /// アカウントコンボボックスを更新
+        /// アカウントコンボボックスを更新（スレッドセーフ版）
         /// </summary>
         private void RefreshAccountComboBox()
         {
             try
             {
-                _isUpdatingAccount = true;
-
-                int currentSelectedIndex = AccountComboBox.SelectedIndex;
-                AccountComboBox.Items.Clear();
-
-                // 1-10のアカウントスロットを再追加
-                for (int i = 1; i <= _accountManager.MaxAccounts; i++)
+                lock (_lockObject)
                 {
-                    var account = _accountManager.GetAccountByNumber(i);
-                    AccountComboBox.Items.Add(account.GetDisplayText());
-                }
+                    _isUpdatingAccount = true;
 
-                // 選択状態を復元
-                if (currentSelectedIndex >= 0 && currentSelectedIndex < AccountComboBox.Items.Count)
-                {
-                    AccountComboBox.SelectedIndex = currentSelectedIndex;
-                }
+                    int currentSelectedIndex = AccountComboBox.SelectedIndex;
+                    AccountComboBox.Items.Clear();
 
-                _isUpdatingAccount = false;
+                    // 1-10のアカウントスロットを再追加
+                    for (int i = 1; i <= _accountManager.MaxAccounts; i++)
+                    {
+                        var account = _accountManager.GetAccountByNumber(i);
+                        AccountComboBox.Items.Add(account.GetDisplayText());
+                    }
+
+                    // 選択状態を復元
+                    if (currentSelectedIndex >= 0 && currentSelectedIndex < AccountComboBox.Items.Count)
+                    {
+                        AccountComboBox.SelectedIndex = currentSelectedIndex;
+                    }
+
+                    _isUpdatingAccount = false;
+                }
             }
             catch (Exception ex)
             {
@@ -886,39 +981,9 @@ namespace CefSharp.fastBOT.UI
             }
         }
 
-        /// <summary>
-        /// HTML自動保存
-        /// </summary>
-        private async Task AutoSaveHtml(string filePrefix)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(_lastHtmlContent))
-                    return;
-
-                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                var fileName = $"{filePrefix}_{timestamp}.html";
-                var filePath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "fastBOT_HTML", fileName);
-
-                // ディレクトリを作成
-                var directory = System.IO.Path.GetDirectoryName(filePath);
-                if (!System.IO.Directory.Exists(directory))
-                {
-                    System.IO.Directory.CreateDirectory(directory);
-                }
-
-                await System.IO.File.WriteAllTextAsync(filePath, _lastHtmlContent, System.Text.Encoding.UTF8);
-                UpdateStatus($"解析ログ自動保存: {fileName}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"AutoSaveHtml error: {ex.Message}");
-            }
-        }
-
         #endregion
 
-        #region UIステータス更新メソッド（MainWindowステータスバー連携版）
+        #region UIステータス更新メソッド（MainWindowステータスバー連携版）（スレッドセーフ版）
 
         /// <summary>
         /// MainWindowの参照を保持するプロパティ
@@ -926,136 +991,140 @@ namespace CefSharp.fastBOT.UI
         public MainWindow ParentMainWindow { get; set; }
 
         /// <summary>
-        /// メインステータスを更新（MainWindowのステータスバーと連携）
+        /// メインステータスを更新（MainWindowのステータスバーと連携）（スレッドセーフ版）
         /// </summary>
         /// <param name="message">ステータスメッセージ</param>
         public void UpdateStatus(string message)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
                     // MainWindowのステータスバーを更新
                     if (ParentMainWindow != null)
                     {
                         ParentMainWindow.UpdateMainStatus(message);
                     }
-                    else
-                    {
-                        // フォールバック：コンソールに出力
-                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateStatus error: {ex.Message}");
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"UpdateStatus inner error: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>
-        /// Proxyステータスを更新
+        /// Proxyステータスを更新（スレッドセーフ版）
         /// </summary>
         /// <param name="message">Proxyステータスメッセージ</param>
         private void UpdateProxyStatus(string message)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
-                    if (ProxyStatusText != null)
+                    lock (_lockObject)
                     {
-                        ProxyStatusText.Text = message;
-                    }
+                        if (ProxyStatusText != null)
+                        {
+                            ProxyStatusText.Text = message;
+                        }
 
-                    // MainWindowにも通知
-                    if (ParentMainWindow != null)
-                    {
-                        ParentMainWindow.ShowLogMessage($"Proxy: {message}", 2000);
+                        // MainWindowにも通知
+                        if (ParentMainWindow != null)
+                        {
+                            ParentMainWindow.ShowLogMessage($"Proxy: {message}", 2000);
+                        }
                     }
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateProxyStatus error: {ex.Message}");
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"UpdateProxyStatus error: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>
-        /// HTML解析ステータスを更新
+        /// HTML解析ステータスを更新（スレッドセーフ版）
         /// </summary>
         /// <param name="message">HTML解析ステータスメッセージ</param>
         private void UpdateHtmlStatus(string message)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
-                    if (HtmlStatusText != null)
+                    lock (_lockObject)
                     {
-                        HtmlStatusText.Text = $"解析: {message}";
-                    }
+                        if (HtmlStatusText != null)
+                        {
+                            HtmlStatusText.Text = $"解析: {message}";
+                        }
 
-                    // MainWindowにも通知
-                    if (ParentMainWindow != null)
-                    {
-                        ParentMainWindow.ShowLogMessage($"HTML解析: {message}", 2000);
+                        // MainWindowにも通知
+                        if (ParentMainWindow != null)
+                        {
+                            ParentMainWindow.ShowLogMessage($"HTML解析: {message}", 2000);
+                        }
                     }
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateHtmlStatus error: {ex.Message}");
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"UpdateHtmlStatus error: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>
-        /// アカウントステータスを更新
+        /// アカウントステータスを更新（スレッドセーフ版）
         /// </summary>
         /// <param name="account">現在のアカウント情報</param>
         private void UpdateAccountStatus(AccountInfo account)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
-                    if (AccountStatusText != null)
+                    lock (_lockObject)
                     {
-                        if (account != null)
+                        if (AccountStatusText != null)
                         {
-                            AccountStatusText.Text = $"アカウント: {account.GetDisplayText()}";
+                            if (account != null)
+                            {
+                                AccountStatusText.Text = $"アカウント: {account.GetDisplayText()}";
+                            }
+                            else
+                            {
+                                AccountStatusText.Text = "アカウント: 未選択";
+                            }
                         }
-                        else
-                        {
-                            AccountStatusText.Text = "アカウント: 未選択";
-                        }
-                    }
 
-                    // MainWindowにも通知
-                    if (ParentMainWindow != null)
-                    {
-                        var statusMessage = account != null
-                            ? $"アカウント: {account.GetDisplayText()}"
-                            : "アカウント: 未選択";
-                        ParentMainWindow.ShowLogMessage(statusMessage, 2000);
+                        // MainWindowにも通知
+                        if (ParentMainWindow != null)
+                        {
+                            var statusMessage = account != null
+                                ? $"アカウント: {account.GetDisplayText()}"
+                                : "アカウント: 未選択";
+                            ParentMainWindow.ShowLogMessage(statusMessage, 2000);
+                        }
                     }
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateAccountStatus error: {ex.Message}");
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"UpdateAccountStatus error: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>
-        /// エラーメッセージを表示
+        /// エラーメッセージを表示（スレッドセーフ版）
         /// </summary>
         /// <param name="errorMessage">エラーメッセージ</param>
         public void ShowError(string errorMessage)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
                     if (ParentMainWindow != null)
                     {
@@ -1065,23 +1134,23 @@ namespace CefSharp.fastBOT.UI
                     {
                         Console.WriteLine($"[ERROR] {errorMessage}");
                     }
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ShowError error: {ex.Message}");
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ShowError error: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>
-        /// 成功メッセージを表示
+        /// 成功メッセージを表示（スレッドセーフ版）
         /// </summary>
         /// <param name="successMessage">成功メッセージ</param>
         public void ShowSuccess(string successMessage)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
                     if (ParentMainWindow != null)
                     {
@@ -1091,54 +1160,60 @@ namespace CefSharp.fastBOT.UI
                     {
                         Console.WriteLine($"[SUCCESS] {successMessage}");
                     }
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ShowSuccess error: {ex.Message}");
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ShowSuccess error: {ex.Message}");
+                }
+            });
         }
 
         /// <summary>
-        /// 進捗状況を更新
+        /// 進行状況を更新（スレッドセーフ版）
         /// </summary>
         /// <param name="step">現在のステップ</param>
         /// <param name="totalSteps">総ステップ数</param>
-        /// <param name="message">進捗メッセージ</param>
+        /// <param name="message">進行メッセージ</param>
         public void UpdateProgress(int step, int totalSteps, string message)
         {
-            try
+            ExecuteOnUIThread(() =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                try
                 {
-                    // プログレスバーを更新
-                    if (ProgressBar != null)
+                    lock (_lockObject)
                     {
-                        ProgressBar.Value = step;
-                        ProgressBar.Maximum = totalSteps;
-                    }
+                        // プログレスバーを更新
+                        if (ProgressBar != null)
+                        {
+                            ProgressBar.Value = step;
+                            ProgressBar.Maximum = totalSteps;
+                        }
 
-                    // ステータスメッセージを更新
-                    var progressMessage = $"[{step}/{totalSteps}] {message}";
-                    UpdateStatus(progressMessage);
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"UpdateProgress error: {ex.Message}");
-            }
+                        // ステータスメッセージを更新
+                        var progressMessage = $"[{step}/{totalSteps}] {message}";
+                        UpdateStatus(progressMessage);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"UpdateProgress error: {ex.Message}");
+                }
+            });
         }
 
         #endregion
 
-        #region パブリックメソッド（他のクラスから使用）
+        #region パブリックメソッド（他のクラスから使用）（スレッドセーフ版）
 
         /// <summary>
         /// 最後に取得したHTMLを取得
         /// </summary>
         public string GetLastHtmlContent()
         {
-            return _lastHtmlContent;
+            lock (_lockObject)
+            {
+                return _lastHtmlContent;
+            }
         }
 
         /// <summary>
@@ -1151,7 +1226,10 @@ namespace CefSharp.fastBOT.UI
                 if (_htmlService != null)
                 {
                     var html = await _htmlService.GetPageHtmlAsync();
-                    _lastHtmlContent = html;
+                    lock (_lockObject)
+                    {
+                        _lastHtmlContent = html;
+                    }
                     return html;
                 }
                 return string.Empty;
@@ -1184,22 +1262,34 @@ namespace CefSharp.fastBOT.UI
         }
 
         /// <summary>
-        /// 現在選択されているアカウント番号を取得
+        /// 現在選択されているアカウント番号を取得（スレッドセーフ版）
         /// </summary>
         public int GetCurrentAccountNumber()
         {
-            return AccountComboBox.SelectedIndex + 1;
+            return ExecuteOnUIThread(() =>
+            {
+                lock (_lockObject)
+                {
+                    return AccountComboBox.SelectedIndex + 1;
+                }
+            });
         }
 
         /// <summary>
-        /// 指定したアカウント番号を選択
+        /// 指定したアカウント番号を選択（スレッドセーフ版）
         /// </summary>
         public void SelectAccount(int accountNumber)
         {
-            if (accountNumber >= 1 && accountNumber <= _accountManager.MaxAccounts)
+            ExecuteOnUIThread(() =>
             {
-                AccountComboBox.SelectedIndex = accountNumber - 1;
-            }
+                lock (_lockObject)
+                {
+                    if (accountNumber >= 1 && accountNumber <= _accountManager.MaxAccounts)
+                    {
+                        AccountComboBox.SelectedIndex = accountNumber - 1;
+                    }
+                }
+            });
         }
 
         /// <summary>
@@ -1214,7 +1304,6 @@ namespace CefSharp.fastBOT.UI
                     int selectedAccountNumber = AccountComboBox.SelectedIndex + 1;
                     var account = _accountManager.GetAccountByNumber(selectedAccountNumber);
 
-                    SaveUIToAccount(account);
                     account.IsActive = account.HasData(); // データがある場合のみ有効化
 
                     bool result = await _accountManager.UpdateAccountAsync(account);

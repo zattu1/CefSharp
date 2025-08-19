@@ -83,7 +83,47 @@ namespace CefSharp.fastBOT.Core
         }
 
         /// <summary>
-        /// テキストボックスに値を入力
+        /// テキストボックスに値を入力（座標ベース）
+        /// </summary>
+        /// <param name="selector">CSSセレクタ</param>
+        /// <param name="text">入力テキスト</param>
+        /// <returns>入力成功/失敗</returns>
+        public async Task<bool> SetTextBySelectorWithCoordinatesAsync(string selector, string text)
+        {
+            try
+            {
+                // 要素の座標を取得
+                var coordinateScript = $@"
+                (function() {{
+                    let element = document.querySelector('{selector}');
+                    if (!element) return null;
+                    let rect = element.getBoundingClientRect();
+                    return [Math.ceil(rect.left + rect.width / 2), Math.ceil(rect.top + rect.height / 2)];
+                }})();";
+
+                var result = await BrowserAutomationUtils.ExecuteScriptAsync(_browser, coordinateScript);
+
+                var coordinates = ParseCoordinatesFromResult(result);
+                if (coordinates != null && coordinates.Count == 2)
+                {
+                    var x = coordinates[0];
+                    var y = coordinates[1];
+
+                    // PostMessageで入力
+                    return BrowserAutomationUtils.VirtualKeyboard(_browser, x, y, text);
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SetTextBySelectorWithCoordinates エラー: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// テキストボックスに値を入力（JavaScript版）
         /// </summary>
         /// <param name="elementId">要素のID</param>
         /// <param name="text">入力テキスト</param>
@@ -101,7 +141,7 @@ namespace CefSharp.fastBOT.Core
                 return false;";
 
             var result = await BrowserAutomationUtils.ExecuteScriptAsync(_browser, script);
-            return result?.ToString() == "True";
+            return SafeGetResult<bool>(result, false);
         }
 
         /// <summary>
@@ -167,7 +207,7 @@ namespace CefSharp.fastBOT.Core
                 var element = await BrowserAutomationUtils.ExecuteScriptAsync(_browser,
                     $"document.querySelector('{selector}') !== null");
 
-                if (element?.ToString() == "True")
+                if (SafeGetResult<bool>(element, false))
                 {
                     return true;
                 }
@@ -189,16 +229,9 @@ namespace CefSharp.fastBOT.Core
         /// <param name="y">Y座標</param>
         /// <param name="isRightClick">右クリックかどうか</param>
         /// <returns>クリック成功/失敗</returns>
-        /// <summary>
-        /// 座標をクリック
-        /// </summary>
-        /// <param name="x">X座標</param>
-        /// <param name="y">Y座標</param>
-        /// <param name="isRightClick">右クリックかどうか</param>
-        /// <returns>クリック成功/失敗</returns>
         public bool ClickCoordinate(int x, int y, bool isRightClick = false)
         {
-            return BrowserAutomationUtils.SendMouseClick(_browser, x, y, isRightClick);
+            return BrowserAutomationUtils.LeftMouseClick(_browser, x, y, 3);
         }
 
         /// <summary>
@@ -294,7 +327,7 @@ namespace CefSharp.fastBOT.Core
         public async Task<string> GetPageTitleAsync()
         {
             var result = await BrowserAutomationUtils.ExecuteScriptAsync(_browser, "document.title");
-            return result?.ToString() ?? "";
+            return SafeGetResult<string>(result, "");
         }
 
         /// <summary>
@@ -314,7 +347,7 @@ namespace CefSharp.fastBOT.Core
         {
             var result = await BrowserAutomationUtils.ExecuteScriptAsync(_browser,
                 "document.documentElement.outerHTML");
-            return result?.ToString() ?? "";
+            return SafeGetResult<string>(result, "");
         }
 
         /// <summary>
@@ -326,7 +359,7 @@ namespace CefSharp.fastBOT.Core
         {
             var script = $"document.querySelector('{selector}')?.textContent || ''";
             var result = await BrowserAutomationUtils.ExecuteScriptAsync(_browser, script);
-            return result?.ToString() ?? "";
+            return SafeGetResult<string>(result, "");
         }
 
         /// <summary>
@@ -338,7 +371,204 @@ namespace CefSharp.fastBOT.Core
         {
             var script = $"document.querySelector('{selector}')?.value || ''";
             var result = await BrowserAutomationUtils.ExecuteScriptAsync(_browser, script);
-            return result?.ToString() ?? "";
+            return SafeGetResult<string>(result, "");
+        }
+
+        #endregion
+
+        #region JavaScript結果処理ヘルパー
+
+        /// <summary>
+        /// JavaScript実行結果を安全に取得するヘルパー
+        /// </summary>
+        /// <typeparam name="T">期待する結果の型</typeparam>
+        /// <param name="result">JavaScript実行結果</param>
+        /// <param name="defaultValue">デフォルト値</param>
+        /// <returns>変換された結果</returns>
+        private T SafeGetResult<T>(object result, T defaultValue = default(T))
+        {
+            try
+            {
+                if (result == null) return defaultValue;
+
+                // 直接キャスト可能な場合
+                if (result is T directResult)
+                {
+                    return directResult;
+                }
+
+                // 型変換を試行
+                if (typeof(T) == typeof(bool))
+                {
+                    if (bool.TryParse(result.ToString(), out bool boolResult))
+                    {
+                        return (T)(object)boolResult;
+                    }
+                    // "True"/"False"の場合
+                    var stringResult = result.ToString();
+                    if (stringResult.Equals("True", StringComparison.OrdinalIgnoreCase))
+                        return (T)(object)true;
+                    if (stringResult.Equals("False", StringComparison.OrdinalIgnoreCase))
+                        return (T)(object)false;
+                }
+                else if (typeof(T) == typeof(int))
+                {
+                    if (int.TryParse(result.ToString(), out int intResult))
+                    {
+                        return (T)(object)intResult;
+                    }
+                }
+                else if (typeof(T) == typeof(string))
+                {
+                    return (T)(object)result.ToString();
+                }
+
+                return defaultValue;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SafeGetResult変換エラー: {ex.Message}");
+                return defaultValue;
+            }
+        }
+
+        /// <summary>
+        /// JavaScript配列結果を整数リストに変換
+        /// </summary>
+        /// <param name="result">JavaScript実行結果</param>
+        /// <returns>整数のリスト</returns>
+        private List<int> ConvertToIntList(object result)
+        {
+            var coordinates = new List<int>();
+
+            try
+            {
+                if (result == null) return coordinates;
+
+                // IList形式の場合
+                if (result is System.Collections.IList list)
+                {
+                    foreach (var item in list)
+                    {
+                        if (int.TryParse(item?.ToString(), out int coord))
+                        {
+                            coordinates.Add(coord);
+                        }
+                    }
+                }
+                // 文字列形式の場合（JSON配列など）
+                else if (result is string stringResult)
+                {
+                    // "[460,274,460,328,437,422]" のような形式
+                    if (stringResult.StartsWith("[") && stringResult.EndsWith("]"))
+                    {
+                        var cleanString = stringResult.Trim('[', ']');
+                        var parts = cleanString.Split(',');
+
+                        foreach (var part in parts)
+                        {
+                            if (int.TryParse(part.Trim(), out int coord))
+                            {
+                                coordinates.Add(coord);
+                            }
+                        }
+                    }
+                    // "460,274,460,328,437,422" のような形式
+                    else if (stringResult.Contains(","))
+                    {
+                        var parts = stringResult.Split(',');
+                        foreach (var part in parts)
+                        {
+                            if (int.TryParse(part.Trim(), out int coord))
+                            {
+                                coordinates.Add(coord);
+                            }
+                        }
+                    }
+                }
+
+                Console.WriteLine($"座標変換結果: [{string.Join(",", coordinates)}]");
+                return coordinates;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ConvertToIntList エラー: {ex.Message}");
+                return coordinates;
+            }
+        }
+
+        /// <summary>
+        /// JavaScript実行結果から座標配列を解析
+        /// </summary>
+        /// <param name="result">JavaScript実行結果</param>
+        /// <returns>座標のリスト</returns>
+        private List<int> ParseCoordinatesFromResult(object result)
+        {
+            DebugJavaScriptResult(result, "ParseCoordinates");
+            return ConvertToIntList(result);
+        }
+
+        /// <summary>
+        /// 既に入力済みかどうかを判定
+        /// </summary>
+        /// <param name="result">JavaScript実行結果</param>
+        /// <returns>入力済みかどうか</returns>
+        private bool IsAlreadyFilledResult(object result)
+        {
+            try
+            {
+                var intList = ConvertToIntList(result);
+                return intList.Count == 1 && intList[0] == -1;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// デバッグ用：JavaScript結果の詳細情報を出力
+        /// </summary>
+        /// <param name="result">JavaScript実行結果</param>
+        /// <param name="context">コンテキスト情報</param>
+        private void DebugJavaScriptResult(object result, string context = "")
+        {
+            try
+            {
+                if (result == null)
+                {
+                    Console.WriteLine($"[{context}] JavaScript結果: null");
+                    return;
+                }
+
+                var type = result.GetType();
+                Console.WriteLine($"[{context}] JavaScript結果型: {type.FullName}");
+                Console.WriteLine($"[{context}] JavaScript結果値: {result}");
+
+                // IListの場合は要素も表示
+                if (result is System.Collections.IList list)
+                {
+                    Console.WriteLine($"[{context}] リスト要素数: {list.Count}");
+                    for (int i = 0; i < Math.Min(list.Count, 10); i++) // 最大10要素まで表示
+                    {
+                        Console.WriteLine($"[{context}]   [{i}]: {list[i]} ({list[i]?.GetType().Name})");
+                    }
+                }
+
+                // IDictionaryの場合はキーと値も表示
+                if (result is System.Collections.IDictionary dict)
+                {
+                    Console.WriteLine($"[{context}] Dictionary要素数: {dict.Count}");
+                    foreach (var key in dict.Keys)
+                    {
+                        Console.WriteLine($"[{context}]   {key}: {dict[key]} ({dict[key]?.GetType().Name})");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{context}] DebugJavaScriptResult エラー: {ex.Message}");
+            }
         }
 
         #endregion

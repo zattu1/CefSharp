@@ -1388,15 +1388,6 @@ namespace CefSharp.fastBOT.UI
         #region インスタンス管理機能
 
         /// <summary>
-        /// 全インスタンスの情報を取得
-        /// </summary>
-        /// <returns>インスタンス情報のリスト</returns>
-        public List<InstanceInfo> GetAllInstancesInfo()
-        {
-            return RequestContextManager.GetAllInstancesInfo();
-        }
-
-        /// <summary>
         /// 現在のインスタンス番号を取得
         /// </summary>
         /// <returns>インスタンス番号</returns>
@@ -1441,32 +1432,6 @@ namespace CefSharp.fastBOT.UI
         }
 
         /// <summary>
-        /// インスタンス管理情報をコンソールに出力
-        /// </summary>
-        public void ShowInstanceManagementInfo()
-        {
-            try
-            {
-                Console.WriteLine("=== Instance Management Info ===");
-                Console.WriteLine($"Current Instance: {GetCurrentInstanceNumber()}");
-                Console.WriteLine($"Current Cache Size: {FormatBytes(GetCurrentInstanceCacheSize())}");
-                Console.WriteLine($"Current Cache Path: {_requestContextManager?.GetBaseCachePath()}");
-
-                Console.WriteLine("\nAll Instances:");
-                var instances = GetAllInstancesInfo();
-                foreach (var instance in instances)
-                {
-                    Console.WriteLine($"  {instance}");
-                }
-                Console.WriteLine("================================");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ShowInstanceManagementInfo error: {ex.Message}");
-            }
-        }
-
-        /// <summary>
         /// バイト数を人間が読みやすい形式にフォーマット
         /// </summary>
         /// <param name="bytes">バイト数</param>
@@ -1481,23 +1446,6 @@ namespace CefSharp.fastBOT.UI
                 return $"{bytes / (1024.0 * 1024.0):F1} MB";
             else
                 return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
-        }
-
-        /// <summary>
-        /// インスタンス管理ウィンドウを表示（将来の拡張用）
-        /// </summary>
-        public void ShowInstanceManagementWindow()
-        {
-            try
-            {
-                // TODO: インスタンス管理専用ウィンドウを実装
-                ShowInstanceManagementInfo();
-                UpdateStatus("インスタンス管理情報をコンソールに出力しました");
-            }
-            catch (Exception ex)
-            {
-                UpdateStatus($"インスタンス管理ウィンドウの表示に失敗しました: {ex.Message}");
-            }
         }
 
         #endregion
@@ -1829,16 +1777,6 @@ namespace CefSharp.fastBOT.UI
                     }
                 };
                 contextMenu.Items.Add(clearCacheItem);
-
-                // インスタンス管理情報表示メニュー
-                var showInstanceInfoItem = new MenuItem
-                {
-                    Header = "インスタンス情報を表示(_I)",
-                    Icon = new TextBlock { Text = "ℹ", FontSize = 12 }
-                };
-                showInstanceInfoItem.Click += (s, e) => ShowInstanceManagementInfo();
-                contextMenu.Items.Add(showInstanceInfoItem);
-
                 contextMenu.Items.Add(new Separator());
 
                 // ステータス更新メニュー

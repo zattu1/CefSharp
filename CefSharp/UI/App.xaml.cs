@@ -29,91 +29,56 @@ namespace CefSharp.fastBOT
         {
             try
             {
-                Console.WriteLine("=== CefSharp Initialization Start (Working Version) ===");
+                var settings = new CefSettings();
 
                 // 起動順に基づくインスタンス番号を取得
                 _currentInstanceNumber = GetNextAvailableInstanceNumber();
 
-                Console.WriteLine($"Instance number: {_currentInstanceNumber}");
-
-                var settings = new CefSettings();
-
-                // インスタンス番号毎のキャッシュパス設定
-                string cachePath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "fastBOT", "Instance", _currentInstanceNumber.ToString()
-                );
+                // キャッシュパス設定
+                string cachePath = CommonSettings.GetCachePath(_currentInstanceNumber);
 
                 // ディレクトリを確実に作成
                 Directory.CreateDirectory(cachePath);
                 settings.CachePath = cachePath;
 
                 // インスタンス毎のログファイル設定
-                settings.LogFile = Path.Combine(cachePath, "cef_debug.log");
+                settings.LogFile = Path.Combine(cachePath, "cef.log");
 
                 // 基本設定
                 settings.Locale = "ja";
-                settings.AcceptLanguageList = "ja-JP,ja,en-US,en";
+                settings.AcceptLanguageList = "ja,en-US;q=0.9,en;q=0.8";
                 settings.UserAgent = UserAgentHelper.GetChromeUserAgent();
 
-                // 必要最小限のコマンドライン引数のみ設定
-                settings.CefCommandLineArgs.Add("--disable-gpu-vsync");
-                settings.CefCommandLineArgs.Add("--max_old_space_size", "4096");
-                settings.CefCommandLineArgs.Add("--disable-gpu-compositing");
-                settings.CefCommandLineArgs.Add("--disable-features", "VizDisplayCompositor");
-
-                // GCM関連のエラーを抑制（動作に影響しない）
+                // プロファイル作成関連の問題を回避するコマンドライン引数
                 settings.CefCommandLineArgs.Add("--disable-background-networking");
                 settings.CefCommandLineArgs.Add("--disable-background-timer-throttling");
                 settings.CefCommandLineArgs.Add("--disable-backgrounding-occluded-windows");
                 settings.CefCommandLineArgs.Add("--disable-renderer-backgrounding");
-
-                // 軽量化（動作に影響しない）
                 settings.CefCommandLineArgs.Add("--disable-extensions");
                 settings.CefCommandLineArgs.Add("--disable-plugins");
                 settings.CefCommandLineArgs.Add("--disable-print-preview");
 
+                // プロファイル関連のエラーを回避
+                settings.CefCommandLineArgs.Add("--disable-web-security");
+                settings.CefCommandLineArgs.Add("--disable-features", "VizDisplayCompositor");
+                settings.CefCommandLineArgs.Add("--no-sandbox");
+                settings.CefCommandLineArgs.Add("--disable-gpu-sandbox");
+
 #if DEBUG
                 settings.RemoteDebuggingPort = 8088 + _currentInstanceNumber;
                 settings.LogSeverity = LogSeverity.Info;
-                Console.WriteLine($"Debug mode - Remote debugging enabled on port {8088 + _currentInstanceNumber}");
 #else
                 settings.LogSeverity = LogSeverity.Error;
 #endif
-
-                Console.WriteLine($"fastBOT: CefSharp initializing with cache: {cachePath}");
-                Console.WriteLine($"UserAgent: {settings.UserAgent}");
-
                 // インスタンスロックファイルを作成
                 CreateInstanceLockFile(_currentInstanceNumber, cachePath);
 
-                // CefSharp初期化前の状態チェック
-                Console.WriteLine($"Before initialization - Cef.IsInitialized: {Cef.IsInitialized}");
-
                 // CefSharp初期化
                 var initResult = Cef.Initialize(settings);
-                Console.WriteLine($"Cef.Initialize() returned: {initResult}");
-                Console.WriteLine($"After initialization - Cef.IsInitialized: {Cef.IsInitialized}");
-
                 if (!initResult)
                 {
                     throw new InvalidOperationException("CefSharp initialization failed");
                 }
-
-                // CefSharp初期化後にシステム情報を出力
-                try
-                {
-                    Console.WriteLine($"Cef version: {Cef.CefVersion}");
-                    Console.WriteLine($"Chromium version: {Cef.ChromiumVersion}");
-                    Console.WriteLine($"CefSharp version: {Cef.CefSharpVersion}");
-                    Console.WriteLine(UserAgentHelper.GetSystemInfo());
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"システム情報取得エラー: {ex.Message}");
-                }
-
-                Console.WriteLine("=== CefSharp Initialization Complete ===");
             }
             catch (Exception ex)
             {
@@ -151,8 +116,6 @@ namespace CefSharp.fastBOT
                         .Where(dir => int.TryParse(Path.GetFileName(dir), out _))
                         .ToList();
 
-                    Console.WriteLine($"Found {instanceDirectories.Count} existing instance directories");
-
                     foreach (var dir in instanceDirectories)
                     {
                         var dirName = Path.GetFileName(dir);
@@ -173,27 +136,23 @@ namespace CefSharp.fastBOT
                                             if (process.ProcessName == currentProcessName && !process.HasExited)
                                             {
                                                 usedNumbers.Add(number);
-                                                Console.WriteLine($"Instance {number} is locked by active process {lockedProcessId}");
                                             }
                                             else
                                             {
                                                 // 異なるプロセス名または終了したプロセスの場合、ロックファイルを削除
                                                 File.Delete(lockFile);
-                                                Console.WriteLine($"Removed stale lock file for instance {number}");
                                             }
                                         }
                                         catch (ArgumentException)
                                         {
                                             // プロセスが存在しない場合、ロックファイルを削除
                                             File.Delete(lockFile);
-                                            Console.WriteLine($"Removed orphaned lock file for instance {number}");
                                         }
                                     }
                                     else
                                     {
                                         // 無効なロックファイルを削除
                                         File.Delete(lockFile);
-                                        Console.WriteLine($"Removed invalid lock file for instance {number}");
                                     }
                                 }
                                 catch (Exception ex)
@@ -210,7 +169,6 @@ namespace CefSharp.fastBOT
                 {
                     if (!usedNumbers.Contains(i))
                     {
-                        Console.WriteLine($"Selected instance number: {i}");
                         return i;
                     }
                 }
@@ -238,7 +196,6 @@ namespace CefSharp.fastBOT
                 var currentProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
 
                 File.WriteAllText(lockFile, currentProcessId.ToString());
-                Console.WriteLine($"Created lock file for instance {instanceNumber}: {lockFile}");
 
                 // アプリケーション終了時にロックファイルを削除
                 AppDomain.CurrentDomain.ProcessExit += (sender, e) => CleanupInstanceLockFile(lockFile);

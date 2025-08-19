@@ -114,7 +114,6 @@ namespace CefSharp.fastBOT.Core
                 await SaveAccountsAsync();
                 AccountChanged?.Invoke(this, account);
                 AccountListUpdated?.Invoke(this, EventArgs.Empty);
-                Console.WriteLine($"Account updated: アカウント{account.AccountNumber}");
                 return true;
             }
             catch (Exception ex)
@@ -151,7 +150,6 @@ namespace CefSharp.fastBOT.Core
 
                     AccountChanged?.Invoke(this, account);
                     AccountListUpdated?.Invoke(this, EventArgs.Empty);
-                    Console.WriteLine($"Account cleared: アカウント{accountNumber}");
                 }
                 return true;
             }
@@ -238,7 +236,6 @@ namespace CefSharp.fastBOT.Core
                 });
 
                 await File.WriteAllTextAsync(_accountsFilePath, json, Encoding.UTF8);
-                Console.WriteLine($"Accounts saved to: {_accountsFilePath}");
             }
             catch (Exception ex)
             {
@@ -275,8 +272,6 @@ namespace CefSharp.fastBOT.Core
                         _accounts.Add(newAccount);
                     }
                 }
-
-                Console.WriteLine($"Loaded {_accounts.Count} account slots (1-{MAX_ACCOUNTS})");
             }
             catch (Exception ex)
             {

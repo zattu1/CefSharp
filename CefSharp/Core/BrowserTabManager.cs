@@ -53,8 +53,6 @@ namespace CefSharp.fastBOT.Core
                     _tabControl.SelectionChanged += TabControl_SelectionChanged;
                 });
             }
-
-            Console.WriteLine("BrowserTabManager initialized successfully");
         }
 
         /// <summary>
@@ -79,7 +77,6 @@ namespace CefSharp.fastBOT.Core
                     {
                         // URL変更イベントを発火
                         OnCurrentUrlChanged?.Invoke(currentUrl);
-                        Console.WriteLine($"Tab switched - OnCurrentUrlChanged fired: {currentUrl}");
                     }
                 }
             }
@@ -164,8 +161,6 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                Console.WriteLine($"Creating tab with title: {title}, URL: {url}");
-
                 // UIスレッドでの実行を保証
                 if (!Application.Current.Dispatcher.CheckAccess())
                 {
@@ -193,13 +188,11 @@ namespace CefSharp.fastBOT.Core
                 // ブラウザを作成
                 var browser = new ChromiumWebBrowser(url);
 
-                // RequestContextは安全に設定
                 if (requestContext != null)
                 {
                     try
                     {
                         browser.RequestContext = requestContext;
-                        Console.WriteLine("RequestContext set after browser creation");
                     }
                     catch (Exception rcEx)
                     {
@@ -285,7 +278,6 @@ namespace CefSharp.fastBOT.Core
                 // URL同期
                 SyncUrlToMainWindow(tab);
 
-                Console.WriteLine($"Tab created successfully: {title}");
                 return tab;
             }
             catch (Exception ex)
@@ -348,7 +340,6 @@ namespace CefSharp.fastBOT.Core
                         tab.Browser?.Dispose();
                         tab.HtmlExtractor = null;
 
-                        Console.WriteLine($"Tab closed: {tab.OriginalTitle}");
                         return true;
                     }
                 }
@@ -499,7 +490,6 @@ namespace CefSharp.fastBOT.Core
                 // イベントを発火
                 OnHtmlDataExtracted?.Invoke(htmlData);
 
-                Console.WriteLine($"HTML extracted: {dataType}, Size: {htmlData.Size} bytes");
                 return htmlData;
             }
             catch (Exception ex)
@@ -530,7 +520,6 @@ namespace CefSharp.fastBOT.Core
                 {
                     tab.OriginalTitle = newTitle;
                     tab.TitleTextBlock.Text = TruncateTitle(newTitle, CalculateMaxTitleLength());
-                    Console.WriteLine($"Tab title updated: {TruncateTitle(newTitle, CalculateMaxTitleLength())}");
                 }
             }
             catch (Exception ex)
@@ -546,19 +535,8 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                Console.WriteLine($"Browser address changed: {newAddress}");
-
                 // アドレス変更時はデフォルトFaviconを設定
                 SetDefaultFavicon(tab);
-
-                // 現在のアクティブタブの場合、イベントを発火
-                var currentTab = GetCurrentTab();
-                if (currentTab == tab)
-                {
-                    SyncUrlToMainWindow(tab);
-                    OnCurrentUrlChanged?.Invoke(newAddress);
-                    Console.WriteLine($"OnCurrentUrlChanged event fired for: {newAddress}");
-                }
             }
             catch (Exception ex)
             {
@@ -601,7 +579,6 @@ namespace CefSharp.fastBOT.Core
                     if (tab.Browser != null && tab.HtmlExtractor == null)
                     {
                         tab.HtmlExtractor = new HtmlExtractionService(tab.Browser);
-                        Console.WriteLine("HtmlExtractionService initialized after loading completed");
                     }
                 }
             }
@@ -620,9 +597,23 @@ namespace CefSharp.fastBOT.Core
             {
                 if (frame.IsMain)
                 {
-                    Console.WriteLine($"Main frame load completed for: {frame.Url}");
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        try
+                        {
+                            var currentTab = GetCurrentTabInternal();
+                            if (currentTab == tab)
+                            {
+                                // MainWindowのURLと同期
+                                SyncUrlToMainWindow(tab);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"URL sync error in OnFrameLoadEnd: {ex.Message}");
+                        }
+                    }), System.Windows.Threading.DispatcherPriority.Background);
 
-                    // メインフレーム読み込み完了後にFaviconを取得
                     Task.Delay(500).ContinueWith(_ =>
                     {
                         try
@@ -634,23 +625,6 @@ namespace CefSharp.fastBOT.Core
                             Console.WriteLine($"GetFaviconFromBrowser error: {ex.Message}");
                         }
                     }, TaskScheduler.Current);
-
-                    // UIスレッドで安全にMainWindowのURLを再同期
-                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        try
-                        {
-                            var currentTab = GetCurrentTabInternal();
-                            if (currentTab == tab)
-                            {
-                                SyncUrlToMainWindow(tab);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"URL sync error in OnFrameLoadEnd: {ex.Message}");
-                        }
-                    }), System.Windows.Threading.DispatcherPriority.Background);
                 }
             }
             catch (Exception ex)
@@ -813,7 +787,6 @@ namespace CefSharp.fastBOT.Core
                                     var faviconUrl = task.Result.Result.ToString();
                                     if (!string.IsNullOrEmpty(faviconUrl))
                                     {
-                                        Console.WriteLine($"Found favicon URL: {faviconUrl}");
                                         LoadFaviconFromUrl(tab, faviconUrl);
                                     }
                                     else
@@ -887,7 +860,6 @@ namespace CefSharp.fastBOT.Core
                                 if (tab?.FaviconImage != null)
                                 {
                                     tab.FaviconImage.Source = bitmapImage;
-                                    Console.WriteLine($"Favicon loaded successfully: {faviconUrl}");
                                     UpdateMainWindowFavicon(faviconUrl);
                                 }
                             }
@@ -1018,7 +990,15 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var currentTab = GetCurrentTab();
+                // UIスレッドでブラウザを取得
+                if (!Application.Current.Dispatcher.CheckAccess())
+                {
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                        ExecuteJavaScriptAsync(script, callback, timeoutSeconds)));
+                    return;
+                }
+
+                var currentTab = GetCurrentTabInternal();
                 if (currentTab?.Browser == null)
                 {
                     var errorResult = new JavaScriptResult
@@ -1057,7 +1037,48 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
-                var currentTab = GetCurrentTab();
+                // UIスレッドでブラウザを取得
+                if (!Application.Current.Dispatcher.CheckAccess())
+                {
+                    var tcs = new TaskCompletionSource<JavaScriptResult>();
+                    await Application.Current.Dispatcher.BeginInvoke(new Action(async () =>
+                    {
+                        try
+                        {
+                            var result = await ExecuteJavaScriptSyncInternal(script, timeoutSeconds);
+                            tcs.SetResult(result);
+                        }
+                        catch (Exception ex)
+                        {
+                            tcs.SetException(ex);
+                        }
+                    }));
+                    return await tcs.Task;
+                }
+
+                return await ExecuteJavaScriptSyncInternal(script, timeoutSeconds);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ExecuteJavaScriptSync error: {ex.Message}");
+                return new JavaScriptResult
+                {
+                    Success = false,
+                    ErrorMessage = ex.Message,
+                    Script = script,
+                    ExecutedAt = DateTime.Now
+                };
+            }
+        }
+
+        /// <summary>
+        /// 現在のタブでJavaScriptを実行（内部実装・UIスレッド専用）
+        /// </summary>
+        private async Task<JavaScriptResult> ExecuteJavaScriptSyncInternal(string script, int timeoutSeconds = 30)
+        {
+            try
+            {
+                var currentTab = GetCurrentTabInternal();
                 if (currentTab?.Browser == null)
                 {
                     return new JavaScriptResult
@@ -1069,11 +1090,11 @@ namespace CefSharp.fastBOT.Core
                     };
                 }
 
-                return await ExecuteJavaScriptOnBrowserSync(currentTab.Browser, script, timeoutSeconds);
+                return await ExecuteJavaScriptOnBrowserSyncInternal(currentTab.Browser, script, timeoutSeconds);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ExecuteJavaScriptSync error: {ex.Message}");
+                Console.WriteLine($"ExecuteJavaScriptSyncInternal error: {ex.Message}");
                 return new JavaScriptResult
                 {
                     Success = false,
@@ -1091,6 +1112,14 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
+                // UIスレッドでの実行を保証
+                if (!Application.Current.Dispatcher.CheckAccess())
+                {
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                        ExecuteJavaScriptOnBrowser(browser, script, callback, timeoutSeconds)));
+                    return;
+                }
+
                 if (browser == null || !browser.IsBrowserInitialized)
                 {
                     var errorResult = new JavaScriptResult
@@ -1151,27 +1180,18 @@ namespace CefSharp.fastBOT.Core
                         // UIスレッドでコールバックを実行
                         if (callback != null)
                         {
-                            if (Application.Current.Dispatcher.CheckAccess())
+                            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                             {
-                                callback(result);
-                            }
-                            else
-                            {
-                                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                                try
                                 {
-                                    try
-                                    {
-                                        callback(result);
-                                    }
-                                    catch (Exception callbackEx)
-                                    {
-                                        Console.WriteLine($"JavaScript callback error: {callbackEx.Message}");
-                                    }
-                                }));
-                            }
+                                    callback(result);
+                                }
+                                catch (Exception callbackEx)
+                                {
+                                    Console.WriteLine($"JavaScript callback error: {callbackEx.Message}");
+                                }
+                            }));
                         }
-
-                        Console.WriteLine($"JavaScript executed: Success={result.Success}, Result={result.Result}");
                     }
                     catch (Exception ex)
                     {
@@ -1186,27 +1206,20 @@ namespace CefSharp.fastBOT.Core
 
                         if (callback != null)
                         {
-                            if (Application.Current.Dispatcher.CheckAccess())
+                            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                             {
-                                callback(errorResult);
-                            }
-                            else
-                            {
-                                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                                try
                                 {
-                                    try
-                                    {
-                                        callback(errorResult);
-                                    }
-                                    catch (Exception callbackEx)
-                                    {
-                                        Console.WriteLine($"Error callback execution error: {callbackEx.Message}");
-                                    }
-                                }));
-                            }
+                                    callback(errorResult);
+                                }
+                                catch (Exception callbackEx)
+                                {
+                                    Console.WriteLine($"Error callback execution error: {callbackEx.Message}");
+                                }
+                            }));
                         }
                     }
-                });
+                }, TaskScheduler.Current);
             }
             catch (Exception ex)
             {
@@ -1230,6 +1243,48 @@ namespace CefSharp.fastBOT.Core
         {
             try
             {
+                // UIスレッドでの実行を保証
+                if (!Application.Current.Dispatcher.CheckAccess())
+                {
+                    var tcs = new TaskCompletionSource<JavaScriptResult>();
+                    await Application.Current.Dispatcher.BeginInvoke(new Action(async () =>
+                    {
+                        try
+                        {
+                            var result = await ExecuteJavaScriptOnBrowserSyncInternal(browser, script, timeoutSeconds);
+                            tcs.SetResult(result);
+                        }
+                        catch (Exception ex)
+                        {
+                            tcs.SetException(ex);
+                        }
+                    }));
+                    return await tcs.Task;
+                }
+
+                return await ExecuteJavaScriptOnBrowserSyncInternal(browser, script, timeoutSeconds);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ExecuteJavaScriptOnBrowserSync error: {ex.Message}");
+                return new JavaScriptResult
+                {
+                    Success = false,
+                    ErrorMessage = ex.Message,
+                    Script = script,
+                    ExecutedAt = DateTime.Now
+                };
+            }
+        }
+
+        /// <summary>
+        /// 指定したブラウザでJavaScriptを実行（内部実装・UIスレッド専用）
+        /// </summary>
+        private async Task<JavaScriptResult> ExecuteJavaScriptOnBrowserSyncInternal(ChromiumWebBrowser browser, string script, int timeoutSeconds = 30)
+        {
+            try
+            {
+
                 if (browser == null || !browser.IsBrowserInitialized)
                 {
                     return new JavaScriptResult
@@ -1281,7 +1336,7 @@ namespace CefSharp.fastBOT.Core
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ExecuteJavaScriptOnBrowserSync error: {ex.Message}");
+                Console.WriteLine($"ExecuteJavaScriptOnBrowserSyncInternal error: {ex.Message}");
                 return new JavaScriptResult
                 {
                     Success = false,
